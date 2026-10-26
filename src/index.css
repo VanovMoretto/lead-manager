@@ -1,0 +1,14 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    @apply antialiased;
+  }
+
+  /* Tema claro: página #F8FAFC (slate-50) | Tema escuro: slate-950 */
+  body {
+    @apply min-h-screen bg-slate-50 font-sans text-slate-900 transition-colors dark:bg-slate-950 dark:text-slate-100;
+  }
+}
