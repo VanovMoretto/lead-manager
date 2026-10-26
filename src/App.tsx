@@ -9,6 +9,9 @@ import PrivateRoute from './components/PrivateRoute'
 import ThemeToggle from './components/ThemeToggle'
 import Login from './pages/Login'
 
+// Prefixo das rotas: "/" localmente e "/lead-manager" no GitHub Pages (definido por --base no build)
+const ROUTER_BASENAME = import.meta.env.BASE_URL.replace(/\/$/, '') || '/'
+
 // Páginas carregadas sob demanda: o Recharts só é baixado ao abrir a Dashboard, etc.
 const Dashboard = lazy(() => import('./pages/Dashboard'))
 const LeadSearch = lazy(() => import('./pages/LeadSearch'))
@@ -55,7 +58,7 @@ export default function App() {
     <ThemeProvider>
       {isSupabaseConfigured ? (
         <AuthProvider>
-          <BrowserRouter>
+          <BrowserRouter basename={ROUTER_BASENAME}>
             <Routes>
               <Route path="/login" element={<Login />} />
 

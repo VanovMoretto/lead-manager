@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "build:pages": "tsc -b && vite build --base=/lead-manager/ && node -e \"require('fs').copyFileSync('dist/index.html','dist/404.html')\"",
+    "deploy": "npm run build:pages && gh-pages -d dist --nojekyll -m \"Deploy\""
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.118.0",
@@ -28,10 +30,12 @@
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
     "autoprefixer": "^10.6.1",
+    "gh-pages": "^6.3.0",
     "oxlint": "^1.88.0",
     "postcss": "^8.5.31",
     "tailwindcss": "^3.4.19",
     "typescript": "~6.0.3",
     "vite": "^8.3.4"
-  }
+  },
+  "homepage": "https://vanovmoretto.github.io/lead-manager/"
 }
