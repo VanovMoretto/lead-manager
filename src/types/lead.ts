@@ -102,6 +102,8 @@ export type Lead = {
   contact_name: string
   contact_phone: string | null
   contact_email: string | null
+  /** Cliente pediu para não receber comunicações/mailing (opt-out LGPD). */
+  marketing_opt_out: boolean
 
   // Origem e interesse (labels de `app_settings_options`)
   /** Meio de prospecção (categoria `origin`). */
@@ -162,6 +164,7 @@ type LeadDbDefaults =
   | 'created_at'
   | 'updated_at'
   | 'is_date_flexible'
+  | 'marketing_opt_out'
   | 'has_ab'
   | 'ab_value'
   | 'has_lodging'
@@ -198,6 +201,7 @@ export const EMPTY_LEAD_FORM: LeadFormData = {
   contact_name: '',
   contact_phone: null,
   contact_email: null,
+  marketing_opt_out: false,
   origin: null,
   room_interests: [],
   event_date: null,

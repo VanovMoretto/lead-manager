@@ -19,6 +19,8 @@ export type LeadSearchFilters = {
   status: LeadStatus | 'all'
   proposalSent: YesNoFilter
   room: string
+  /** Meio de prospecção. */
+  origin: string
   lossReason: string
   search: string
 }
@@ -30,6 +32,7 @@ export const EMPTY_FILTERS: LeadSearchFilters = {
   status: 'all',
   proposalSent: 'all',
   room: '',
+  origin: '',
   lossReason: '',
   search: '',
 }
@@ -52,6 +55,7 @@ export function countActiveFilters(filters: LeadSearchFilters): number {
   if (filters.status !== 'all') count += 1
   if (filters.proposalSent !== 'all') count += 1
   if (filters.room) count += 1
+  if (filters.origin) count += 1
   if (filters.lossReason) count += 1
   if (filters.search.trim()) count += 1
   return count
@@ -120,6 +124,7 @@ function applyFilters<Q extends { eq: any; gte: any; lt: any; lte: any; or: any;
   if (filters.proposalSent !== 'all') next = next.eq('proposal_sent', filters.proposalSent === 'yes')
   // Lead com várias salas: basta conter a sala filtrada
   if (filters.room) next = next.filter('room_interests', 'cs', toPgArrayLiteral([filters.room]))
+  if (filters.origin) next = next.eq('origin', filters.origin)
   if (filters.lossReason) next = next.eq('loss_reason', filters.lossReason)
 
   const searchConditions = buildSearchConditions(filters.search)
@@ -184,6 +189,7 @@ export function describeFilters(filters: LeadSearchFilters): string[] {
   if (filters.status !== 'all') lines.push(`Situação: ${LEAD_STATUS_LABELS[filters.status]}`)
   if (filters.proposalSent !== 'all') lines.push(`Proposta enviada: ${filters.proposalSent === 'yes' ? 'Sim' : 'Não'}`)
   if (filters.room) lines.push(`Sala/Salão: ${filters.room}`)
+  if (filters.origin) lines.push(`Meio de prospecção: ${filters.origin}`)
   if (filters.lossReason) lines.push(`Motivo de perda: ${filters.lossReason}`)
   if (filters.search.trim()) lines.push(`Busca: "${filters.search.trim()}"`)
 

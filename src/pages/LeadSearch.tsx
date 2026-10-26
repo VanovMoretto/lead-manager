@@ -293,6 +293,10 @@ export default function LeadSearch() {
 
   // ---- Opções dos selects (inclui opções inativas, para achar leads antigos) ----
   const roomOptions = useMemo(() => options.room.map((option) => ({ label: option.label, active: option.active })), [options.room])
+  const originOptions = useMemo(
+    () => options.origin.map((option) => ({ label: option.label, active: option.active })),
+    [options.origin],
+  )
   const lossReasonOptions = useMemo(() => {
     const fromDb = options.loss_reason.map((option) => ({ label: option.label, active: option.active }))
     return fromDb.length > 0 ? fromDb : DEFAULT_LOSS_REASONS.map((label) => ({ label, active: true }))
@@ -335,10 +339,11 @@ export default function LeadSearch() {
         setExportFeedback({ type: 'success', message: `Planilha gerada com ${allLeads.length} lead(s).` })
       } else if (kind === 'csv') {
         const summary = exporters.exportMailingToCsv(allLeads)
-        const merged = summary.leadsWithContact - summary.contacts
+        const merged = summary.mergedDuplicates
         const parts = [
           `Mailing gerado com ${summary.contacts} contato(s) único(s).`,
           merged > 0 ? `${merged} orçamento(s) repetido(s) do mesmo cliente foram agrupados.` : null,
+          summary.optedOut > 0 ? `${summary.optedOut} contato(s) com opt-out LGPD foram ignorados.` : null,
           summary.skipped > 0 ? `${summary.skipped} lead(s) sem e-mail nem telefone ficaram de fora.` : null,
         ]
         setExportFeedback({ type: 'success', message: parts.filter(Boolean).join(' ') })
@@ -411,7 +416,7 @@ export default function LeadSearch() {
           />
         </div>
 
-        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-7">
+        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-8">
           <FilterField label="Filtrar datas por" htmlFor="filter-date-field">
             <select
               id="filter-date-field"
@@ -492,6 +497,23 @@ export default function LeadSearch() {
                 <option key={option.label} value={option.label}>
                   {option.label}
                   {option.active ? '' : ' (inativa)'}
+                </option>
+              ))}
+            </select>
+          </FilterField>
+
+          <FilterField label="Meio de prospecção" htmlFor="filter-origin">
+            <select
+              id="filter-origin"
+              value={filters.origin}
+              onChange={(event) => updateFilter('origin', event.target.value)}
+              className={controlClassName}
+            >
+              <option value="">Todos</option>
+              {originOptions.map((option) => (
+                <option key={option.label} value={option.label}>
+                  {option.label}
+                  {option.active ? '' : ' (inativo)'}
                 </option>
               ))}
             </select>

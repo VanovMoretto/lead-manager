@@ -44,6 +44,20 @@ function downloadBlob(blob: Blob, filename: string) {
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
+/**
+ * Proteção contra "formula injection" (CSV/Excel): um texto que comece com
+ * =, +, -, @, tab ou retorno de carro poderia ser interpretado como fórmula ao abrir
+ * a planilha. Um apóstrofo no início faz o Excel tratar o conteúdo como texto.
+ */
+export function sanitizeSpreadsheetText(val: string): string {
+  return /^[=+\-@\t\r]/.test(val) ? `'${val}` : val
+}
+
+/** Aplica a sanitização em todas as células de texto de uma linha (números passam direto). */
+function sanitizeRow<T extends string | number | null>(row: T[]): T[] {
+  return row.map((cell) => (typeof cell === 'string' ? (sanitizeSpreadsheetText(cell) as T) : cell))
+}
+
 /** Soma os componentes de valor de uma lista de leads. */
 function sumValues(leads: Lead[]): LeadValueBreakdown {
   return leads.reduce<LeadValueBreakdown>(
@@ -86,13 +100,14 @@ export function exportLeadsToXlsx(leads: Lead[]): void {
     'Situação',
     'Motivo de perda',
     'Detalhes da perda',
+    'Opt-out LGPD',
   ]
   // Colunas numéricas de valor (J, K, L, M)
   const valueColumns = [9, 10, 11, 12]
 
   const rows: Array<Array<string | number | null>> = leads.map((lead) => {
     const values = getLeadValues(lead)
-    return [
+    return sanitizeRow<string | number | null>([
       formatDateTimeBR(lead.created_at),
       lead.contact_name,
       lead.contact_phone ?? '',
@@ -112,7 +127,8 @@ export function exportLeadsToXlsx(leads: Lead[]): void {
       LEAD_STATUS_LABELS[lead.status],
       lead.loss_reason ?? '',
       lead.loss_reason_details ?? '',
-    ]
+      yesNo(lead.marketing_opt_out),
+    ])
   })
 
   const sheet = XLSX.utils.aoa_to_sheet([header, ...rows])
@@ -180,6 +196,8 @@ export type MailingContact = {
   everClosed: boolean
   /** Data do orçamento mais recente (para ordenar). */
   latestAt: string
+  /** Algum orçamento desse contato pediu opt-out de comunicações (LGPD). */
+  optedOut: boolean
 }
 
 export type MailingSummary = {
@@ -189,6 +207,10 @@ export type MailingSummary = {
   leadsWithContact: number
   /** Leads sem e-mail nem telefone (ficaram de fora). */
   skipped: number
+  /** Contatos únicos ignorados por opt-out LGPD. */
+  optedOut: number
+  /** Orçamentos repetidos agrupados entre os contatos exportados. */
+  mergedDuplicates: number
 }
 
 /**
@@ -246,6 +268,8 @@ export function groupMailingContacts(leads: Lead[]): MailingContact[] {
         requests: group.length,
         everClosed: group.some((lead) => lead.status === 'fechado'),
         latestAt: latest.created_at,
+        // Basta um orçamento com opt-out para o contato inteiro sair do mailing
+        optedOut: group.some((lead) => lead.marketing_opt_out),
       }
     })
     .sort((a, b) => b.latestAt.localeCompare(a.latestAt))
@@ -253,7 +277,8 @@ export function groupMailingContacts(leads: Lead[]): MailingContact[] {
 
 export function exportMailingToCsv(leads: Lead[]): MailingSummary {
   const header = ['Nome', 'Email', 'Telefone', 'Sala de Interesse', 'Status', 'Qtd Solicitações', 'Já Fechou Evento?']
-  const contacts = groupMailingContacts(leads)
+  const grouped = groupMailingContacts(leads)
+  const contacts = grouped.filter((contact) => !contact.optedOut)
   const leadsWithContact = leads.filter((lead) => normalizeEmail(lead.contact_email) || normalizePhoneDigits(lead)).length
 
   const lines = [
@@ -268,6 +293,7 @@ export function exportMailingToCsv(leads: Lead[]): MailingSummary {
         String(contact.requests),
         contact.everClosed ? 'Sim' : 'Não',
       ]
+        .map(sanitizeSpreadsheetText)
         .map(csvField)
         .join(';'),
     ),
@@ -277,7 +303,13 @@ export function exportMailingToCsv(leads: Lead[]): MailingSummary {
   const blob = new Blob(['\uFEFF' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' })
   downloadBlob(blob, `mailing_${timestampForFilename()}.csv`)
 
-  return { contacts: contacts.length, leadsWithContact, skipped: leads.length - leadsWithContact }
+  return {
+    contacts: contacts.length,
+    leadsWithContact,
+    skipped: leads.length - leadsWithContact,
+    optedOut: grouped.length - contacts.length,
+    mergedDuplicates: contacts.reduce((sum, contact) => sum + contact.requests - 1, 0),
+  }
 }
 
 // =============================================================================

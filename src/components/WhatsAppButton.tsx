@@ -1,15 +1,33 @@
-import { MessageCircle } from 'lucide-react'
+import { BellOff, MessageCircle } from 'lucide-react'
 import { buildFollowUpWhatsAppUrl } from '../lib/whatsapp'
 import { cn } from '../lib/utils'
 import type { Lead } from '../types/lead'
 
 type WhatsAppButtonProps = {
-  lead: Pick<Lead, 'contact_name' | 'contact_phone' | 'room_interests' | 'room_interest'>
+  lead: Pick<Lead, 'contact_name' | 'contact_phone' | 'room_interests' | 'room_interest'> & Partial<Pick<Lead, 'marketing_opt_out'>>
   className?: string
 }
 
-/** Abre o WhatsApp em nova aba com a mensagem de follow-up pronta. Não aparece sem telefone válido. */
+/**
+ * Abre o WhatsApp em nova aba com a mensagem de follow-up pronta. Não aparece sem telefone válido.
+ * Cliente com opt-out (LGPD) não recebe o atalho: no lugar aparece um selo de aviso.
+ */
 export default function WhatsAppButton({ lead, className }: WhatsAppButtonProps) {
+  if (lead.marketing_opt_out) {
+    return (
+      <span
+        title="O cliente pediu para não receber comunicações/mailing (LGPD)"
+        className={cn(
+          'inline-flex shrink-0 items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300',
+          className,
+        )}
+      >
+        <BellOff className="h-3.5 w-3.5" aria-hidden="true" />
+        Opt-out LGPD
+      </span>
+    )
+  }
+
   const url = buildFollowUpWhatsAppUrl(lead)
   if (!url) return null
 

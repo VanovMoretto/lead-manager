@@ -189,6 +189,11 @@ export default function Layout() {
     })
   }, [])
 
+  const handleLeadDeleted = useCallback((lead: Lead) => {
+    setLeadsVersion((current) => current + 1)
+    setToast({ id: Date.now(), message: `Lead "${lead.contact_name}" excluído.` })
+  }, [])
+
   // Esconde o aviso de sucesso depois de alguns segundos
   useEffect(() => {
     if (!toast) return
@@ -279,7 +284,13 @@ export default function Layout() {
         </div>
       </main>
 
-      <LeadFormModal open={leadForm.open} lead={leadForm.lead} onClose={closeLeadForm} onSaved={handleLeadSaved} />
+      <LeadFormModal
+        open={leadForm.open}
+        lead={leadForm.lead}
+        onClose={closeLeadForm}
+        onSaved={handleLeadSaved}
+        onDeleted={handleLeadDeleted}
+      />
 
       {/* Aviso de sucesso */}
       <div aria-live="polite" className="pointer-events-none fixed inset-x-4 bottom-4 z-[60] flex justify-center sm:inset-x-auto sm:right-6 sm:justify-end">

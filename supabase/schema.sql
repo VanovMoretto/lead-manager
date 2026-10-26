@@ -163,6 +163,13 @@ comment on column public.leads.ab_value       is 'Valor de Alimentos & Bebidas (
 comment on column public.leads.lodging_value  is 'Valor de Hospedagem (0 quando has_lodging = false).';
 comment on column public.leads.total_value    is 'Valor global da proposta: locação + A&B + hospedagem (gerada).';
 
+-- Opt-out de comunicações/mailing (LGPD)
+alter table public.leads
+  add column if not exists marketing_opt_out boolean not null default false;
+
+comment on column public.leads.marketing_opt_out is
+  'Cliente pediu para não receber comunicações/mailing (LGPD). Excluído da exportação de mailing.';
+
 -- Número de proposta não pode se repetir (quando informado)
 create unique index if not exists leads_proposal_number_key
   on public.leads (proposal_number)

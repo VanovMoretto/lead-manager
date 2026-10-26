@@ -15,6 +15,7 @@ import {
   RefreshCw,
   User,
   UserPlus,
+  Trash2,
   UtensilsCrossed,
   X,
   type LucideIcon,
@@ -55,6 +56,8 @@ type LeadFormModalProps = {
   lead?: Lead | null
   /** Chamado após salvar com sucesso, com a linha retornada pelo banco. */
   onSaved?: (lead: Lead, mode: LeadFormMode) => void
+  /** Chamado após excluir o lead (só no modo edição). */
+  onDeleted?: (lead: Lead) => void
 }
 
 // =============================================================================
@@ -65,6 +68,8 @@ type FormState = {
   contact_name: string
   contact_phone: string
   contact_email: string
+  /** Cliente pediu para não receber comunicações/mailing (LGPD). */
+  marketing_opt_out: boolean
   origin: string
   /** Salas marcadas (seleção múltipla). */
   room_interests: string[]
@@ -96,6 +101,7 @@ function buildInitialState(lead?: Lead | null): FormState {
     contact_name: lead?.contact_name ?? '',
     contact_phone: lead?.contact_phone ? formatPhoneBR(lead.contact_phone) : '',
     contact_email: lead?.contact_email ?? '',
+    marketing_opt_out: lead?.marketing_opt_out ?? false,
     origin: lead?.origin ?? '',
     room_interests: lead ? [...getLeadRooms(lead)] : [],
     no_date: lead?.is_date_flexible ?? false,
@@ -103,9 +109,9 @@ function buildInitialState(lead?: Lead | null): FormState {
     date_notes: lead?.date_notes ?? '',
     value_cents: toCents(lead?.proposed_value),
     has_ab: lead?.has_ab ?? false,
-    ab_cents: lead?.has_ab ? toCents(lead.ab_value) || null : null,
+    ab_cents: lead?.has_ab ? toCents(lead.ab_value) ?? null : null,
     has_lodging: lead?.has_lodging ?? false,
-    lodging_cents: lead?.has_lodging ? toCents(lead.lodging_value) || null : null,
+    lodging_cents: lead?.has_lodging ? toCents(lead.lodging_value) ?? null : null,
     proposal_sent: lead?.proposal_sent ?? false,
     proposal_number: lead?.proposal_number ?? '',
     status: lead?.status ?? 'em_aberto',
@@ -159,6 +165,7 @@ function buildPayload(state: FormState): LeadInsert {
     contact_name: state.contact_name.trim(),
     contact_phone: phoneDigits.length > 0 ? formatPhoneBR(phoneDigits) : null,
     contact_email: state.contact_email.trim() ? state.contact_email.trim().toLowerCase() : null,
+    marketing_opt_out: state.marketing_opt_out,
     origin: state.origin || null,
     room_interests: state.room_interests,
     is_date_flexible: state.no_date,
@@ -412,13 +419,14 @@ type LeadFormProps = {
   lead: Lead | null
   onCancel: () => void
   onSaved?: (lead: Lead, mode: LeadFormMode) => void
+  onDeleted?: (lead: Lead) => void
   /** Pede um formulário novo e vazio (usado em "Salvar e cadastrar outro"). */
   onRequestReset: () => void
   /** Informa ao modal se há alterações não salvas e se está salvando. */
   onStateChange: (state: { dirty: boolean; submitting: boolean }) => void
 }
 
-function LeadForm({ lead, onCancel, onSaved, onRequestReset, onStateChange }: LeadFormProps) {
+function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateChange }: LeadFormProps) {
   const mode: LeadFormMode = lead ? 'edit' : 'create'
   const initialState = useMemo(() => buildInitialState(lead), [lead])
 
@@ -426,6 +434,9 @@ function LeadForm({ lead, onCancel, onSaved, onRequestReset, onStateChange }: Le
   const [errors, setErrors] = useState<FormErrors>({})
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  /** Salvando ou excluindo: trava os botões e o fechamento do modal. */
+  const busy = submitting || deleting
   const submitIntentRef = useRef<'close' | 'new'>('close')
 
   const { options, loading: optionsLoading, error: optionsError, reload: reloadOptions } = useSettingsOptions()
@@ -433,8 +444,8 @@ function LeadForm({ lead, onCancel, onSaved, onRequestReset, onStateChange }: Le
   const dirty = useMemo(() => JSON.stringify(form) !== JSON.stringify(initialState), [form, initialState])
 
   useEffect(() => {
-    onStateChange({ dirty, submitting })
-  }, [dirty, submitting, onStateChange])
+    onStateChange({ dirty, submitting: busy })
+  }, [dirty, busy, onStateChange])
 
   const originLabels = useMemo(
     () => withCurrentValue(options.origin.map((option) => option.label), form.origin),
@@ -519,7 +530,7 @@ function LeadForm({ lead, onCancel, onSaved, onRequestReset, onStateChange }: Le
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (submitting) return
+    if (busy) return
 
     const validationErrors = validate(form)
     const firstError = Object.keys(validationErrors)[0] as FieldName | undefined
@@ -557,6 +568,36 @@ function LeadForm({ lead, onCancel, onSaved, onRequestReset, onStateChange }: Le
     } else {
       onCancel()
     }
+  }
+
+  const handleDelete = async () => {
+    if (!lead || busy) return
+    const confirmed = window.confirm(
+      `Excluir o lead "${lead.contact_name}"?\n\nEssa ação é permanente e remove todos os dados deste orçamento.`,
+    )
+    if (!confirmed) return
+
+    setDeleting(true)
+    setSubmitError(null)
+    // .select() devolve as linhas apagadas: lista vazia = nada foi excluído (lead inexistente ou sem permissão)
+    const { data, error } = await supabase.from('leads').delete().eq('id', lead.id).select('id')
+    setDeleting(false)
+
+    if (error) {
+      setSubmitError(
+        error.message.toLowerCase().includes('failed to fetch')
+          ? 'Sem conexão com o servidor. O lead não foi excluído.'
+          : 'Não foi possível excluir o lead. Tente novamente.',
+      )
+      return
+    }
+    if (!data || data.length === 0) {
+      setSubmitError('Este lead não foi excluído: ele já não existe ou você não tem permissão para excluí-lo.')
+      return
+    }
+
+    onDeleted?.(lead)
+    onCancel()
   }
 
   const showProposalNumber = needsProposalNumber(form)
@@ -632,6 +673,19 @@ function LeadForm({ lead, onCancel, onSaved, onRequestReset, onStateChange }: Le
 
           {/* Só no cadastro: avisa se o telefone/e-mail já aparece em leads anteriores (não bloqueia) */}
           {mode === 'create' && <RecurringClientNotice phone={form.contact_phone} email={form.contact_email} />}
+
+          <label className="flex w-fit cursor-pointer items-start gap-2.5 text-sm text-slate-600 dark:text-slate-300">
+            <input
+              type="checkbox"
+              checked={form.marketing_opt_out}
+              onChange={(event) => update('marketing_opt_out', event.target.checked)}
+              className="mt-0.5 h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-600 dark:border-slate-600 dark:bg-slate-900"
+            />
+            <span>
+              Cliente solicitou não receber comunicações/mailing{' '}
+              <span className="text-xs font-medium text-slate-400 dark:text-slate-500">(Opt-out LGPD)</span>
+            </span>
+          </label>
         </Section>
 
         {/* 2. Origem e espaço */}
@@ -943,11 +997,25 @@ function LeadForm({ lead, onCancel, onSaved, onRequestReset, onStateChange }: Le
             <span>{submitError}</span>
           </div>
         )}
-        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end">
+        <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
+          {mode === 'edit' ? (
+            <button
+              type="button"
+              onClick={() => void handleDelete()}
+              disabled={busy}
+              className="inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-red-600 transition-colors hover:bg-red-50 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-60 dark:text-red-400 dark:hover:bg-red-950/40 dark:hover:text-red-300"
+            >
+              {deleting ? <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Trash2 className="h-4 w-4" aria-hidden="true" />}
+              {deleting ? 'Excluindo...' : 'Excluir lead'}
+            </button>
+          ) : (
+            <span className="hidden sm:block" aria-hidden="true" />
+          )}
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center">
           <button
             type="button"
             onClick={onCancel}
-            disabled={submitting}
+            disabled={busy}
             className="rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-60 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
           >
             Cancelar
@@ -955,7 +1023,7 @@ function LeadForm({ lead, onCancel, onSaved, onRequestReset, onStateChange }: Le
           {mode === 'create' && (
             <button
               type="submit"
-              disabled={submitting}
+              disabled={busy}
               onClick={() => {
                 submitIntentRef.current = 'new'
               }}
@@ -966,7 +1034,7 @@ function LeadForm({ lead, onCancel, onSaved, onRequestReset, onStateChange }: Le
           )}
           <button
             type="submit"
-            disabled={submitting}
+            disabled={busy}
             onClick={() => {
               submitIntentRef.current = 'close'
             }}
@@ -975,6 +1043,7 @@ function LeadForm({ lead, onCancel, onSaved, onRequestReset, onStateChange }: Le
             {submitting && <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />}
             {submitting ? 'Salvando...' : mode === 'create' ? 'Cadastrar lead' : 'Salvar alterações'}
           </button>
+          </div>
         </div>
       </footer>
     </form>
@@ -985,7 +1054,7 @@ function LeadForm({ lead, onCancel, onSaved, onRequestReset, onStateChange }: Le
 // Modal (painel lateral)
 // =============================================================================
 
-export default function LeadFormModal({ open, onClose, lead = null, onSaved }: LeadFormModalProps) {
+export default function LeadFormModal({ open, onClose, lead = null, onSaved, onDeleted }: LeadFormModalProps) {
   // A cada abertura, gera uma nova chave para remontar o formulário limpo
   const [sessionKey, setSessionKey] = useState(open ? 1 : 0)
   const [wasOpen, setWasOpen] = useState(open)
@@ -1080,6 +1149,7 @@ export default function LeadFormModal({ open, onClose, lead = null, onSaved }: L
             lead={lead}
             onCancel={onClose}
             onSaved={onSaved}
+            onDeleted={onDeleted}
             onRequestReset={() => setSessionKey((current) => current + 1)}
             onStateChange={handleFormStateChange}
           />
