@@ -102,6 +102,8 @@ export type Lead = {
   contact_name: string
   contact_phone: string | null
   contact_email: string | null
+  /** Empresa do contato; nulo quando é pessoa física. */
+  company: string | null
   /** Cliente pediu para não receber comunicações/mailing (opt-out LGPD). */
   marketing_opt_out: boolean
 
@@ -117,8 +119,12 @@ export type Lead = {
   room_interest: string | null
 
   // Data do evento
-  /** Nulo quando o cliente ainda não definiu a data. */
+  /** Primeiro (ou único) dia do evento. Nulo quando o cliente ainda não definiu a data. */
   event_date: ISODate | null
+  /** Último dia quando o evento dura mais de um dia; nulo para evento de um dia. */
+  event_end_date: ISODate | null
+  /** Coluna gerada: último dia efetivo (event_end_date ou event_date). Somente leitura. */
+  event_last_date: ISODate | null
   is_date_flexible: boolean
   /** Ex.: "Previsão para Novembro". */
   date_notes: string | null
@@ -148,6 +154,9 @@ export type Lead = {
   /** Campo livre, usado principalmente quando o motivo é "Outros". */
   loss_reason_details: string | null
 
+  /** Observações da negociação (painel de detalhes do lead). */
+  observations: string | null
+
   /** Usuário que cadastrou o lead (default `auth.uid()`). */
   user_id: UUID | null
 
@@ -156,7 +165,7 @@ export type Lead = {
 }
 
 /** Colunas que o banco calcula e que nunca são enviadas em INSERT/UPDATE. */
-type LeadGeneratedFields = 'contact_phone_digits' | 'total_value' | 'room_interest'
+type LeadGeneratedFields = 'contact_phone_digits' | 'total_value' | 'room_interest' | 'event_last_date'
 
 /** Campos que o banco preenche sozinho quando omitidos. */
 type LeadDbDefaults =
@@ -178,13 +187,16 @@ type LeadDbDefaults =
 type LeadNullableFields =
   | 'contact_phone'
   | 'contact_email'
+  | 'company'
   | 'origin'
   | 'event_date'
+  | 'event_end_date'
   | 'date_notes'
   | 'proposed_value'
   | 'proposal_number'
   | 'loss_reason'
   | 'loss_reason_details'
+  | 'observations'
 
 /** Payload para criar um lead: só `contact_name` é obrigatório. */
 export type LeadInsert = Omit<Lead, LeadDbDefaults | LeadNullableFields | LeadGeneratedFields> &
@@ -201,10 +213,12 @@ export const EMPTY_LEAD_FORM: LeadFormData = {
   contact_name: '',
   contact_phone: null,
   contact_email: null,
+  company: null,
   marketing_opt_out: false,
   origin: null,
   room_interests: [],
   event_date: null,
+  event_end_date: null,
   is_date_flexible: false,
   date_notes: null,
   proposed_value: null,
@@ -217,6 +231,7 @@ export const EMPTY_LEAD_FORM: LeadFormData = {
   status: 'em_aberto',
   loss_reason: null,
   loss_reason_details: null,
+  observations: null,
 }
 
 /** Filtros da listagem de leads. */
@@ -229,6 +244,71 @@ export type LeadFilters = {
   event_date_from?: ISODate
   event_date_to?: ISODate
   proposal_sent?: boolean
+}
+
+// =============================================================================
+// Opt-out por contato (LGPD)
+// =============================================================================
+
+/** Linha da lista de supressão: um e-mail ou telefone normalizado que pediu opt-out. */
+export type MarketingSuppression = {
+  id: UUID
+  kind: 'email' | 'phone'
+  /** E-mail em minúsculas ou telefone só com dígitos (DDD + número, sem o 55). */
+  value: string
+  /** Lead em que o opt-out foi registrado (pode já ter sido excluído). */
+  source_lead_id: UUID | null
+  created_at: ISODateTime
+}
+
+// =============================================================================
+// Anexos das propostas
+// =============================================================================
+
+export const ATTACHMENT_KINDS = ['rental_proposal', 'ab_proposal'] as const
+
+/** Tipo de proposta anexada ao lead. */
+export type AttachmentKind = (typeof ATTACHMENT_KINDS)[number]
+
+export const ATTACHMENT_KIND_LABELS: Record<AttachmentKind, string> = {
+  rental_proposal: 'Proposta de Locação',
+  ab_proposal: 'Proposta de A&B',
+}
+
+/** Linha da tabela `lead_attachments` (o arquivo fica no bucket `lead-attachments`). */
+export type LeadAttachment = {
+  id: UUID
+  lead_id: UUID
+  kind: AttachmentKind
+  /** Caminho no bucket: {lead_id}/{kind}/{arquivo}. */
+  storage_path: string
+  /** Nome original do arquivo, usado no download. */
+  file_name: string
+  mime_type: string
+  size_bytes: number
+  uploaded_by: UUID | null
+  created_at: ISODateTime
+}
+
+export type LeadAttachmentInsert = Omit<LeadAttachment, 'id' | 'created_at' | 'uploaded_by'> &
+  Partial<Pick<LeadAttachment, 'id' | 'created_at' | 'uploaded_by'>>
+
+// =============================================================================
+// Perfis de usuário
+// =============================================================================
+
+/** Linha da tabela `user_profiles` (um perfil por usuário do Supabase Auth). */
+export type UserProfile = {
+  user_id: UUID
+  email: string | null
+  /** ADMIN: Painel Admin, gestão de usuários e exclusões. */
+  is_admin: boolean
+  /** Usuário desativado não lê nem grava dados. */
+  is_active: boolean
+  /** Caminho da foto no bucket `avatars`. */
+  avatar_path: string | null
+  last_sign_in_at: ISODateTime | null
+  created_at: ISODateTime
 }
 
 // =============================================================================
@@ -257,15 +337,45 @@ export type Database = {
         Update: AppSettingOptionUpdate
         Relationships: []
       }
+      marketing_suppressions: {
+        Row: MarketingSuppression
+        /** Somente leitura para o app: a lista é mantida por triggers no banco. */
+        Insert: never
+        Update: never
+        Relationships: []
+      }
       leads: {
         Row: Lead
         Insert: LeadInsert
         Update: LeadUpdate
         Relationships: []
       }
+      lead_attachments: {
+        Row: LeadAttachment
+        Insert: LeadAttachmentInsert
+        /** Anexos não são editados: troca = enviar outro arquivo. */
+        Update: never
+        Relationships: []
+      }
+      user_profiles: {
+        Row: UserProfile
+        /** Criado por trigger em auth.users. */
+        Insert: never
+        /** O próprio usuário só altera a foto; papel e acesso mudam por `admin_set_user_access`. */
+        Update: { avatar_path?: string | null }
+        Relationships: []
+      }
     }
     Views: { [_ in never]: never }
-    Functions: { [_ in never]: never }
+    Functions: {
+      /** O usuário logado tem papel ADMIN? */
+      is_admin: { Args: Record<string, never>; Returns: boolean }
+      /** ADMIN ativa/desativa um usuário ou muda o papel (campo omitido = mantém). */
+      admin_set_user_access: {
+        Args: { p_user_id: UUID; p_is_admin?: boolean; p_is_active?: boolean }
+        Returns: UserProfile
+      }
+    }
     Enums: { [_ in never]: never }
     CompositeTypes: { [_ in never]: never }
   }

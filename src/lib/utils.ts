@@ -5,3 +5,8 @@ import { twMerge } from 'tailwind-merge'
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
+
+/** Clique numa linha de tabela que não caiu em um botão, link ou campo dentro dela. */
+export function isRowClick(target: EventTarget): boolean {
+  return !(target instanceof Element && target.closest('a, button, input, select, textarea, label'))
+}

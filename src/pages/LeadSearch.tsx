@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { useOutletContext } from 'react-router-dom'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { Link, useNavigate, useOutletContext } from 'react-router-dom'
 import {
+  Building2,
   ArrowDown,
   ArrowUp,
   ArrowUpDown,
@@ -20,19 +21,26 @@ import {
   X,
 } from 'lucide-react'
 import PageHeader from '../components/PageHeader'
+import ExportPreviewModal, { type ExportKind, type ExportPreviewData } from '../components/ExportPreviewModal'
+import StatusBadge from '../components/StatusBadge'
 import WhatsAppButton from '../components/WhatsAppButton'
 import type { LayoutOutletContext } from '../components/Layout'
 import { useSettingsOptions } from '../hooks/useSettingsOptions'
-import { cn } from '../lib/utils'
+import { cn, isRowClick } from '../lib/utils'
 import { formatBRL, formatDateBR } from '../lib/format'
-import { getLeadRooms, getLeadValues, hasAnyValue } from '../lib/leadFields'
+import { countEventDays, getLeadRooms, getLeadValues, hasAnyValue } from '../lib/leadFields'
+import { useCompanies } from '../hooks/useCompanies'
 import { toLocalISODate } from '../lib/dashboard'
 import {
+  COMPANY_FILTER_WITH,
+  COMPANY_FILTER_WITHOUT,
   DATE_FIELD_LABELS,
   DEFAULT_SORT,
   EMPTY_FILTERS,
   countActiveFilters,
+  describeFilters,
   fetchAllFilteredLeads,
+  fetchMarketingSuppressions,
   fetchLeadPage,
   type DateField,
   type LeadPage,
@@ -41,7 +49,7 @@ import {
   type SortField,
   type YesNoFilter,
 } from '../lib/leadQuery'
-import { DEFAULT_LOSS_REASONS, LEAD_STATUS_LABELS, type Lead, type LeadStatus } from '../types/lead'
+import { DEFAULT_LOSS_REASONS, type Lead, type LeadStatus } from '../types/lead'
 
 // =============================================================================
 // Constantes visuais
@@ -63,45 +71,17 @@ const YES_NO_OPTIONS: Array<{ value: YesNoFilter; label: string }> = [
   { value: 'no', label: 'Não' },
 ]
 
-const STATUS_BADGE_CLASSES: Record<LeadStatus, string> = {
-  em_aberto: 'bg-amber-50 text-amber-700 ring-amber-600/20 dark:bg-amber-950/40 dark:text-amber-300 dark:ring-amber-400/20',
-  fechado: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20 dark:bg-emerald-950/40 dark:text-emerald-300 dark:ring-emerald-400/20',
-  perdido: 'bg-red-50 text-red-700 ring-red-600/20 dark:bg-red-950/40 dark:text-red-300 dark:ring-red-400/20',
-}
-
-const STATUS_BADGE_DOT: Record<LeadStatus, string> = {
-  em_aberto: 'bg-amber-500',
-  fechado: 'bg-emerald-500',
-  perdido: 'bg-red-500',
-}
-
 const controlClassName = cn(
   'block w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm transition-colors',
   'focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20',
   'dark:border-slate-700 dark:bg-slate-950 dark:text-white',
 )
 
-type ExportKind = 'xlsx' | 'csv' | 'pdf'
-
 type AsyncResult<T> = { key: string; data: T | null; error: string | null }
 
 // =============================================================================
 // Componentes de apoio
 // =============================================================================
-
-function StatusBadge({ status }: { status: LeadStatus }) {
-  return (
-    <span
-      className={cn(
-        'inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold ring-1 ring-inset',
-        STATUS_BADGE_CLASSES[status],
-      )}
-    >
-      <span className={cn('h-1.5 w-1.5 rounded-full', STATUS_BADGE_DOT[status])} aria-hidden="true" />
-      {LEAD_STATUS_LABELS[status]}
-    </span>
-  )
-}
 
 function FilterField({ label, htmlFor, children, className }: { label: string; htmlFor: string; children: ReactNode; className?: string }) {
   return (
@@ -136,7 +116,7 @@ function RoomTags({ rooms, highlight }: { rooms: string[]; highlight?: string })
   )
 }
 
-/** Valor total em destaque e a composição (locação, A&B, hospedagem) logo abaixo. */
+/** Receita total em destaque e a composição (locação, A&B, hospedagem) logo abaixo. */
 function ValueCell({ lead }: { lead: Lead }) {
   if (!hasAnyValue(lead)) return <span className="text-slate-400 dark:text-slate-500">—</span>
   const values = getLeadValues(lead)
@@ -231,7 +211,10 @@ function ExportButton({ kind, label, icon: Icon, busy, disabled, onClick }: Expo
 
 export default function LeadSearch() {
   const { openEditLead, leadsVersion } = useOutletContext<LayoutOutletContext>()
+  const navigate = useNavigate()
   const { options } = useSettingsOptions({ includeInactive: true })
+  // Empresas já cadastradas (recarrega quando um lead é salvo)
+  const { companies } = useCompanies(leadsVersion)
 
   const [filters, setFilters] = useState<LeadSearchFilters>(EMPTY_FILTERS)
   const [searchInput, setSearchInput] = useState('')
@@ -241,6 +224,8 @@ export default function LeadSearch() {
   const [retryCount, setRetryCount] = useState(0)
 
   const [exporting, setExporting] = useState<ExportKind | null>(null)
+  const [preview, setPreview] = useState<ExportPreviewData | null>(null)
+  const [generating, setGenerating] = useState(false)
   const [exportFeedback, setExportFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
 
   // ---- Busca com atraso (não consulta a cada tecla) ----
@@ -323,6 +308,7 @@ export default function LeadSearch() {
     setPage(0)
   }
 
+  // Carrega os dados e abre a pré-visualização; o arquivo só é gerado na confirmação
   const handleExport = async (kind: ExportKind) => {
     setExporting(kind)
     setExportFeedback(null)
@@ -334,11 +320,43 @@ export default function LeadSearch() {
         return
       }
 
-      if (kind === 'xlsx') {
-        exporters.exportLeadsToXlsx(allLeads)
-        setExportFeedback({ type: 'success', message: `Planilha gerada com ${allLeads.length} lead(s).` })
-      } else if (kind === 'csv') {
-        const summary = exporters.exportMailingToCsv(allLeads)
+      const filterLabels = describeFilters(filters)
+      if (kind === 'csv') {
+        // O mailing só sai com a lista de opt-out por contato carregada (LGPD); sem ela, não exporta
+        let suppressions: Awaited<ReturnType<typeof fetchMarketingSuppressions>>
+        try {
+          suppressions = await fetchMarketingSuppressions()
+        } catch {
+          setExportFeedback({
+            type: 'error',
+            message:
+              'Não foi possível carregar a lista de opt-out (LGPD), então o mailing não foi gerado. Verifique se a migração 004 foi aplicada no Supabase.',
+          })
+          return
+        }
+        setPreview({ kind, leads: allLeads, filters: filterLabels, mailing: exporters.buildMailing(allLeads, suppressions) })
+      } else {
+        setPreview({ kind, leads: allLeads, filters: filterLabels })
+      }
+    } catch {
+      setExportFeedback({ type: 'error', message: 'Não foi possível preparar a exportação. Tente novamente.' })
+    } finally {
+      setExporting(null)
+    }
+  }
+
+  const cancelExport = useCallback(() => setPreview(null), [])
+
+  const confirmExport = async () => {
+    if (!preview) return
+    setGenerating(true)
+    try {
+      const exporters = await import('../lib/exporters')
+      if (preview.kind === 'xlsx') {
+        exporters.exportLeadsToXlsx(preview.leads)
+        setExportFeedback({ type: 'success', message: `Planilha gerada com ${preview.leads.length} lead(s).` })
+      } else if (preview.kind === 'csv') {
+        const summary = exporters.exportMailingToCsv(preview.mailing)
         const merged = summary.mergedDuplicates
         const parts = [
           `Mailing gerado com ${summary.contacts} contato(s) único(s).`,
@@ -348,13 +366,14 @@ export default function LeadSearch() {
         ]
         setExportFeedback({ type: 'success', message: parts.filter(Boolean).join(' ') })
       } else {
-        exporters.exportLeadsToPdf(allLeads, filters)
-        setExportFeedback({ type: 'success', message: `Relatório PDF gerado com ${allLeads.length} lead(s).` })
+        exporters.exportLeadsToPdf(preview.leads, preview.filters)
+        setExportFeedback({ type: 'success', message: `Relatório PDF gerado com ${preview.leads.length} lead(s).` })
       }
+      setPreview(null)
     } catch {
       setExportFeedback({ type: 'error', message: 'Não foi possível gerar a exportação. Tente novamente.' })
     } finally {
-      setExporting(null)
+      setGenerating(false)
     }
   }
 
@@ -404,19 +423,19 @@ export default function LeadSearch() {
         <div className="relative">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" aria-hidden="true" />
           <label htmlFor="search-text" className="sr-only">
-            Buscar por nome, e-mail, telefone ou nº da proposta
+            Buscar por nome, empresa, e-mail, telefone ou nº da proposta
           </label>
           <input
             id="search-text"
             type="search"
-            placeholder="Buscar por nome, e-mail, telefone ou nº da proposta..."
+            placeholder="Buscar por nome, empresa, e-mail, telefone ou nº da proposta..."
             value={searchInput}
             onChange={(event) => setSearchInput(event.target.value)}
             className={cn(controlClassName, 'py-2.5 pl-10')}
           />
         </div>
 
-        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-8">
+        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-5">
           <FilterField label="Filtrar datas por" htmlFor="filter-date-field">
             <select
               id="filter-date-field"
@@ -519,6 +538,28 @@ export default function LeadSearch() {
             </select>
           </FilterField>
 
+          <FilterField label="Empresa" htmlFor="filter-company">
+            <select
+              id="filter-company"
+              value={filters.company}
+              onChange={(event) => updateFilter('company', event.target.value)}
+              className={controlClassName}
+            >
+              <option value="">Todas</option>
+              <option value={COMPANY_FILTER_WITH}>Somente empresas</option>
+              <option value={COMPANY_FILTER_WITHOUT}>Pessoa física (sem empresa)</option>
+              {companies.length > 0 && (
+                <optgroup label="Empresas">
+                  {companies.map((company) => (
+                    <option key={company} value={company}>
+                      {company}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+            </select>
+          </FilterField>
+
           <FilterField label="Motivo de recusa" htmlFor="filter-loss-reason">
             <select
               id="filter-loss-reason"
@@ -618,7 +659,7 @@ export default function LeadSearch() {
                     Salas / Origem
                   </th>
                   <SortableHeader field="event_date" label="Evento" sort={sort} onSort={handleSort} />
-                  <SortableHeader field="total_value" label="Valor total" sort={sort} onSort={handleSort} align="right" />
+                  <SortableHeader field="total_value" label="Receita total" sort={sort} onSort={handleSort} align="right" />
                   <th scope="col" className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
                     Proposta
                   </th>
@@ -630,12 +671,31 @@ export default function LeadSearch() {
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {rows.map((lead: Lead) => (
-                  <tr key={lead.id} className="align-top transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/40">
+                  <tr
+                    key={lead.id}
+                    onClick={(event) => {
+                      if (isRowClick(event.target)) navigate(`/leads/${lead.id}`)
+                    }}
+                    className="cursor-pointer align-top transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/40"
+                  >
                     <td className="whitespace-nowrap py-3 pl-5 pr-3 text-slate-600 dark:text-slate-300">
                       {formatDateBR(toLocalISODate(new Date(lead.created_at)))}
                     </td>
                     <td className="px-3 py-3">
-                      <p className="font-medium text-slate-900 dark:text-white">{lead.contact_name}</p>
+<Link
+                        to={`/leads/${lead.id}`}
+                        className="font-medium text-slate-900 hover:text-brand-700 hover:underline dark:text-white dark:hover:text-brand-300"
+                      >
+                        {lead.contact_name}
+                      </Link>
+                      {lead.company && (
+                        <p className="mt-0.5 flex items-center gap-1 text-xs font-medium text-slate-600 dark:text-slate-300">
+                          <Building2 className="h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden="true" />
+                          <span className={cn('truncate', lead.company === filters.company && 'text-brand-700 dark:text-brand-300')}>
+                            {lead.company}
+                          </span>
+                        </p>
+                      )}
                       <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
                         <span>{[lead.contact_phone, lead.contact_email].filter(Boolean).join(' · ') || 'Sem contato'}</span>
                         <WhatsAppButton lead={lead} />
@@ -647,7 +707,14 @@ export default function LeadSearch() {
                     </td>
                     <td className="whitespace-nowrap px-3 py-3 text-slate-700 dark:text-slate-200">
                       {lead.event_date ? (
-                        formatDateBR(lead.event_date)
+                        <>
+                          {formatDateBR(lead.event_date)}
+                          {lead.event_end_date && (
+                            <p className="text-xs text-slate-500 dark:text-slate-400">
+                              até {formatDateBR(lead.event_end_date)} · {countEventDays(lead)} dias
+                            </p>
+                          )}
+                        </>
                       ) : (
                         <span className="block max-w-[11rem] truncate text-slate-500 dark:text-slate-400" title={lead.date_notes ?? undefined}>
                           {lead.date_notes || 'Sem data'}
@@ -745,6 +812,8 @@ export default function LeadSearch() {
           </div>
         )}
       </section>
+
+      <ExportPreviewModal preview={preview} busy={generating} onCancel={cancelExport} onConfirm={() => void confirmExport()} />
     </>
   )
 }

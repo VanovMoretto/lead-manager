@@ -124,7 +124,7 @@ export type DashboardKpis = {
   proposalConversionRate: number
   /** Perdidos / total (0–1). */
   lossRate: number
-  /** Valor total fechado (locação + A&B + hospedagem). */
+  /** Receita total fechada (locação + A&B + hospedagem). */
   closedValue: number
   /** Composição do que foi fechado. */
   closedBreakdown: LeadValueBreakdown

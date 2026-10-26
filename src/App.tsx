@@ -6,8 +6,10 @@ import { ThemeProvider } from './contexts/ThemeContext'
 import { isSupabaseConfigured } from './lib/supabase'
 import Layout from './components/Layout'
 import PrivateRoute from './components/PrivateRoute'
+import AdminRoute from './components/AdminRoute'
 import ThemeToggle from './components/ThemeToggle'
 import Login from './pages/Login'
+import ResetPassword from './pages/ResetPassword'
 
 // Prefixo das rotas: "/" localmente e "/lead-manager" no GitHub Pages (definido por --base no build)
 const ROUTER_BASENAME = import.meta.env.BASE_URL.replace(/\/$/, '') || '/'
@@ -16,6 +18,8 @@ const ROUTER_BASENAME = import.meta.env.BASE_URL.replace(/\/$/, '') || '/'
 const Dashboard = lazy(() => import('./pages/Dashboard'))
 const LeadSearch = lazy(() => import('./pages/LeadSearch'))
 const AdminPanel = lazy(() => import('./pages/AdminPanel'))
+const LeadDetails = lazy(() => import('./pages/LeadDetails'))
+const Profile = lazy(() => import('./pages/Profile'))
 
 function PageLoader() {
   return (
@@ -61,6 +65,7 @@ export default function App() {
           <BrowserRouter basename={ROUTER_BASENAME}>
             <Routes>
               <Route path="/login" element={<Login />} />
+              <Route path="/redefinir-senha" element={<ResetPassword />} />
 
               <Route element={<PrivateRoute />}>
                 <Route element={<Layout />}>
@@ -81,13 +86,32 @@ export default function App() {
                     }
                   />
                   <Route
-                    path="admin"
+                    path="leads/:leadId"
                     element={
                       <Suspense fallback={<PageLoader />}>
-                        <AdminPanel />
+                        <LeadDetails />
                       </Suspense>
                     }
                   />
+                  <Route
+                    path="perfil"
+                    element={
+                      <Suspense fallback={<PageLoader />}>
+                        <Profile />
+                      </Suspense>
+                    }
+                  />
+                  {/* Painel Admin: somente usuários com papel ADMIN */}
+                  <Route element={<AdminRoute />}>
+                    <Route
+                      path="admin"
+                      element={
+                        <Suspense fallback={<PageLoader />}>
+                          <AdminPanel />
+                        </Suspense>
+                      }
+                    />
+                  </Route>
                 </Route>
               </Route>
 

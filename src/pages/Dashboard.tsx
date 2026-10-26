@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { useOutletContext } from 'react-router-dom'
+import { Link, useNavigate, useOutletContext } from 'react-router-dom'
 import {
   Bar,
   BarChart,
@@ -14,6 +14,7 @@ import {
   YAxis,
 } from 'recharts'
 import {
+  Building2,
   CalendarRange,
   CircleAlert,
   CircleCheck,
@@ -33,9 +34,9 @@ import WhatsAppButton from '../components/WhatsAppButton'
 import type { LayoutOutletContext } from '../components/Layout'
 import { useTheme } from '../contexts/ThemeContext'
 import { supabase } from '../lib/supabase'
-import { cn } from '../lib/utils'
+import { cn, isRowClick } from '../lib/utils'
 import { formatBRL, formatDateBR } from '../lib/format'
-import { getLeadRooms, getLeadValues, hasAnyValue, type LeadValueBreakdown } from '../lib/leadFields'
+import { countEventDays, getLeadRooms, getLeadValues, hasAnyValue, type LeadValueBreakdown } from '../lib/leadFields'
 import {
   DASHBOARD_LEAD_COLUMNS,
   NOT_INFORMED_LABEL,
@@ -59,7 +60,7 @@ import {
   type RankItem,
   type TrendPoint,
 } from '../lib/dashboard'
-import type { Lead, LeadStatus } from '../types/lead'
+import { LEAD_STATUS_LABELS, type Lead, type LeadStatus } from '../types/lead'
 
 // =============================================================================
 // Cores dos gráficos
@@ -739,7 +740,7 @@ function ValueCompositionCard({
       <div className="mb-4">
         <h2 className="text-base font-semibold text-slate-900 dark:text-white">Composição dos orçamentos</h2>
         <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
-          Valor Global = Locação / Espaço + A&amp;B + Hospedagem
+          Receita Total = Locação / Espaço + A&amp;B + Hospedagem
         </p>
       </div>
       {loading ? (
@@ -750,7 +751,7 @@ function ValueCompositionCard({
       ) : (
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-2 xl:divide-x xl:divide-slate-100 dark:xl:divide-slate-800">
           <ValueRow
-            title="Fechado (receita ganha)"
+            title="Fechado (receita fechada)"
             subtitle={`${formatInteger(closedCount)} lead(s) fechado(s) no período`}
             values={closed}
           />
@@ -794,7 +795,7 @@ type QuickAction = { status: LeadStatus; label: string; icon: LucideIcon; classN
 const QUICK_ACTIONS: QuickAction[] = [
   {
     status: 'fechado',
-    label: 'Ganhou',
+    label: 'Fechou',
     icon: CircleCheck,
     className: 'text-emerald-700 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-950/40',
   },
@@ -814,6 +815,8 @@ function FollowUpTable({
   /** Abre o formulário; com `status`, já vem com a situação selecionada. */
   onEdit: (lead: Lead, status?: LeadStatus) => void
 }) {
+  const navigate = useNavigate()
+
   if (leads.length === 0) {
     return <EmptyChart message="Nenhum lead em aberto. Tudo em dia!" />
   }
@@ -826,7 +829,7 @@ function FollowUpTable({
             <th className="px-5 py-2.5">Contato</th>
             <th className="px-3 py-2.5">Salas / Origem</th>
             <th className="px-3 py-2.5">Data do evento</th>
-            <th className="px-3 py-2.5 text-right">Valor total</th>
+            <th className="px-3 py-2.5 text-right">Receita total</th>
             <th className="px-3 py-2.5">Proposta</th>
             <th className="px-3 py-2.5">Sem atualização</th>
             <th className="px-5 py-2.5 text-right">Ações</th>
@@ -835,9 +838,26 @@ function FollowUpTable({
         <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
           {leads.map((lead) => {
             return (
-              <tr key={lead.id} className="transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/40">
+              <tr
+                key={lead.id}
+                onClick={(event) => {
+                  if (isRowClick(event.target)) navigate(`/leads/${lead.id}`)
+                }}
+                className="cursor-pointer transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/40"
+              >
                 <td className="px-5 py-3">
-                  <p className="font-medium text-slate-900 dark:text-white">{lead.contact_name}</p>
+                  <Link
+                    to={`/leads/${lead.id}`}
+                    className="font-medium text-slate-900 hover:text-brand-700 hover:underline dark:text-white dark:hover:text-brand-300"
+                  >
+                    {lead.contact_name}
+                  </Link>
+                  {lead.company && (
+                    <p className="mt-0.5 flex items-center gap-1 text-xs font-medium text-slate-600 dark:text-slate-300">
+                      <Building2 className="h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden="true" />
+                      <span className="max-w-[14rem] truncate">{lead.company}</span>
+                    </p>
+                  )}
                   <div className="mt-0.5 flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
                     <span>{lead.contact_phone || lead.contact_email || 'Sem contato'}</span>
                     <WhatsAppButton lead={lead} />
@@ -851,7 +871,14 @@ function FollowUpTable({
                 </td>
                 <td className="px-3 py-3 text-slate-700 dark:text-slate-200">
                   {lead.event_date ? (
-                    formatDateBR(lead.event_date)
+                    <>
+                      {formatDateBR(lead.event_date)}
+                      {lead.event_end_date && (
+                        <span className="block text-xs text-slate-500 dark:text-slate-400">
+                          até {formatDateBR(lead.event_end_date)} · {countEventDays(lead)} dias
+                        </span>
+                      )}
+                    </>
                   ) : (
                     <span className="block max-w-[10rem] truncate text-slate-500 dark:text-slate-400" title={lead.date_notes ?? undefined}>
                       {lead.date_notes || 'Sem data'}
@@ -887,8 +914,8 @@ function FollowUpTable({
                         key={status}
                         type="button"
                         onClick={() => onEdit(lead, status)}
-                        title={`Marcar como ${label.toLowerCase()}`}
-                        aria-label={`Marcar ${lead.contact_name} como ${label.toLowerCase()}`}
+                        title={`${label}: marcar como ${LEAD_STATUS_LABELS[status]}`}
+                        aria-label={`${label}: marcar ${lead.contact_name} como ${LEAD_STATUS_LABELS[status].toLowerCase()}`}
                         className={cn('inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-semibold transition-colors', className)}
                       >
                         <Icon className="h-4 w-4" aria-hidden="true" />
@@ -1130,7 +1157,7 @@ export default function Dashboard() {
           detail={`${formatPercent(kpis.proposalConversionRate)} sobre propostas enviadas (${formatInteger(kpis.closed)}/${formatInteger(kpis.proposalsSent)})`}
           footer={
             <div className="flex items-baseline justify-between gap-2">
-              <span className="text-brand-100">Total fechado</span>
+              <span className="text-brand-100">Receita total fechada</span>
               <span className="text-lg font-bold tabular-nums" title={formatBRL(kpis.closedValue)}>
                 {formatCurrencyCompact(kpis.closedValue)}
               </span>

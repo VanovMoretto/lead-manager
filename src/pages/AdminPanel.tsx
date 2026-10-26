@@ -3,15 +3,19 @@ import {
   CircleAlert,
   DoorOpen,
   Info,
+  ListChecks,
   LoaderCircle,
   Megaphone,
   Plus,
   RefreshCw,
   ThumbsDown,
+  Users,
   type LucideIcon,
 } from 'lucide-react'
 import type { PostgrestError } from '@supabase/supabase-js'
 import PageHeader from '../components/PageHeader'
+import ToggleSwitch from '../components/ToggleSwitch'
+import UserManagement from '../components/UserManagement'
 import { supabase } from '../lib/supabase'
 import { cn } from '../lib/utils'
 import {
@@ -37,24 +41,31 @@ const CATEGORY_CONFIG: Record<SettingCategory, CategoryConfig> = {
   room: {
     icon: DoorOpen,
     description: 'Espaços oferecidos no select "Sala/Salão de interesse".',
-    placeholder: 'Ex.: Salão Imperial',
+    placeholder: 'Ex.: Nome da sala ou salão',
     singular: 'sala',
   },
   origin: {
     icon: Megaphone,
     description: 'Canais pelos quais o cliente chegou até vocês.',
-    placeholder: 'Ex.: Instagram',
+    placeholder: 'Ex.: Canal de prospecção',
     singular: 'meio de prospecção',
   },
   loss_reason: {
     icon: ThumbsDown,
     description: 'Motivos exibidos quando um lead "Não Fechou".',
-    placeholder: 'Ex.: Escolheu outro local',
+    placeholder: 'Ex.: Motivo da perda',
     singular: 'motivo',
   },
 }
 
 const MAX_LABEL_LENGTH = 80
+
+type AdminSection = 'options' | 'users'
+
+const ADMIN_SECTIONS: Array<{ value: AdminSection; label: string; icon: LucideIcon }> = [
+  { value: 'options', label: 'Opções dos formulários', icon: ListChecks },
+  { value: 'users', label: 'Usuários', icon: Users },
+]
 
 /** Ativas primeiro, depois ordem alfabética. */
 function sortOptions(options: AppSettingOption[]): AppSettingOption[] {
@@ -67,45 +78,6 @@ function translateError(error: PostgrestError): string {
   if (error.code === '42501') return 'Você não tem permissão para alterar as opções. Faça login novamente.'
   if (error.message.toLowerCase().includes('failed to fetch')) return 'Sem conexão com o servidor. Tente novamente.'
   return 'Não foi possível salvar. Tente novamente.'
-}
-
-// =============================================================================
-// Switch de ativar/desativar
-// =============================================================================
-
-type ToggleSwitchProps = {
-  checked: boolean
-  onChange: () => void
-  disabled?: boolean
-  label: string
-}
-
-function ToggleSwitch({ checked, onChange, disabled, label }: ToggleSwitchProps) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={label}
-      title={label}
-      onClick={onChange}
-      disabled={disabled}
-      className={cn(
-        'relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors',
-        'focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-900',
-        'disabled:cursor-wait disabled:opacity-60',
-        checked ? 'bg-brand-600' : 'bg-slate-300 dark:bg-slate-700',
-      )}
-    >
-      <span
-        className={cn(
-          'inline-block h-5 w-5 rounded-full bg-white shadow transition-transform',
-          checked ? 'translate-x-[22px]' : 'translate-x-0.5',
-        )}
-        aria-hidden="true"
-      />
-    </button>
-  )
 }
 
 // =============================================================================
@@ -295,6 +267,7 @@ export default function AdminPanel() {
   const [state, setState] = useState<LoadState>({ status: 'loading', options: [] })
   const [reloadCount, setReloadCount] = useState(0)
   const [mobileTab, setMobileTab] = useState<SettingCategory>('room')
+  const [section, setSection] = useState<AdminSection>('options')
 
   useEffect(() => {
     let isActive = true
@@ -350,67 +323,102 @@ export default function AdminPanel() {
     <>
       <PageHeader
         title="Painel Admin"
-        description="Gerencie as opções dos formulários sem alterar o código. Desativar uma opção a esconde dos formulários, mas preserva o histórico dos leads."
+        description={
+          section === 'options'
+            ? 'Gerencie as opções dos formulários sem alterar o código. Desativar uma opção a esconde dos formulários, mas preserva o histórico dos leads.'
+            : 'Ative ou desative o acesso dos usuários e defina quem é administrador.'
+        }
       />
 
-      {state.status === 'error' && (
-        <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300">
-          <span className="flex items-center gap-2">
-            <CircleAlert className="h-4 w-4 shrink-0" aria-hidden="true" />
-            Não foi possível carregar as opções.
-          </span>
-          <button type="button" onClick={retry} className="inline-flex items-center gap-1 font-semibold hover:underline">
-            <RefreshCw className="h-4 w-4" aria-hidden="true" />
-            Tentar de novo
-          </button>
-        </div>
-      )}
-
-      {/* Abas no celular/tablet; três colunas no desktop */}
       <div
         role="tablist"
-        aria-label="Categorias"
-        className="mb-4 flex gap-1 overflow-x-auto rounded-lg border border-slate-200 bg-white p-1 shadow-sm xl:hidden dark:border-slate-800 dark:bg-slate-900"
+        aria-label="Seções do Painel Admin"
+        className="mb-6 inline-flex rounded-lg border border-slate-200 bg-white p-1 shadow-sm dark:border-slate-800 dark:bg-slate-900"
       >
-        {SETTING_CATEGORIES.map((category) => (
+        {ADMIN_SECTIONS.map(({ value, label, icon: Icon }) => (
           <button
-            key={category}
+            key={value}
             type="button"
             role="tab"
-            aria-selected={mobileTab === category}
-            onClick={() => setMobileTab(category)}
+            aria-selected={section === value}
+            onClick={() => setSection(value)}
             className={cn(
-              'flex-1 whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
-              mobileTab === category
+              'inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+              section === value
                 ? 'bg-brand-600 text-white shadow-sm'
                 : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800',
             )}
           >
-            {SETTING_CATEGORY_LABELS[category]}
+            <Icon className="h-4 w-4" aria-hidden="true" />
+            {label}
           </button>
         ))}
       </div>
 
-      {state.status === 'loading' ? (
-        <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
-          {SETTING_CATEGORIES.map((category) => (
-            <div
-              key={category}
-              className={cn(
-                'h-80 animate-pulse rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900',
-                mobileTab !== category && 'hidden xl:block',
-              )}
-            />
-          ))}
-        </div>
+      {section === 'users' ? (
+        <UserManagement />
       ) : (
-        <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-3">
+        <>
+        {state.status === 'error' && (
+          <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300">
+            <span className="flex items-center gap-2">
+              <CircleAlert className="h-4 w-4 shrink-0" aria-hidden="true" />
+              Não foi possível carregar as opções.
+            </span>
+            <button type="button" onClick={retry} className="inline-flex items-center gap-1 font-semibold hover:underline">
+              <RefreshCw className="h-4 w-4" aria-hidden="true" />
+              Tentar de novo
+            </button>
+          </div>
+        )}
+
+        {/* Abas no celular/tablet; três colunas no desktop */}
+        <div
+          role="tablist"
+          aria-label="Categorias"
+          className="mb-4 flex gap-1 overflow-x-auto rounded-lg border border-slate-200 bg-white p-1 shadow-sm xl:hidden dark:border-slate-800 dark:bg-slate-900"
+        >
           {SETTING_CATEGORIES.map((category) => (
-            <div key={category} className={cn(mobileTab !== category && 'hidden xl:block')}>
-              <CategoryCard category={category} options={byCategory[category]} onAdd={handleAdd} onToggle={handleToggle} />
-            </div>
+            <button
+              key={category}
+              type="button"
+              role="tab"
+              aria-selected={mobileTab === category}
+              onClick={() => setMobileTab(category)}
+              className={cn(
+                'flex-1 whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+                mobileTab === category
+                  ? 'bg-brand-600 text-white shadow-sm'
+                  : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800',
+              )}
+            >
+              {SETTING_CATEGORY_LABELS[category]}
+            </button>
           ))}
         </div>
+
+        {state.status === 'loading' ? (
+          <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
+            {SETTING_CATEGORIES.map((category) => (
+              <div
+                key={category}
+                className={cn(
+                  'h-80 animate-pulse rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900',
+                  mobileTab !== category && 'hidden xl:block',
+                )}
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-3">
+            {SETTING_CATEGORIES.map((category) => (
+              <div key={category} className={cn(mobileTab !== category && 'hidden xl:block')}>
+                <CategoryCard category={category} options={byCategory[category]} onAdd={handleAdd} onToggle={handleToggle} />
+              </div>
+            ))}
+          </div>
+        )}
+        </>
       )}
     </>
   )

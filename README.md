@@ -6,15 +6,17 @@ Micro-CRM para equipes comerciais de espaços de eventos: cadastro rápido de le
 
 ## Funcionalidades
 
-- **Cadastro de leads com baixa fricção**: só o nome é obrigatório; telefone com máscara, várias salas de interesse, data ou previsão, valores de locação, A&B e hospedagem com valor global calculado na hora.
+- **Cadastro de leads com baixa fricção**: só o nome é obrigatório; telefone com máscara, empresa (vazio = pessoa física, com sugestão das empresas já cadastradas), várias salas de interesse, evento de um ou mais dias (ou só a previsão), valores de locação, A&B e hospedagem com a receita total calculada na hora.
+- **Detalhes do lead**: ao clicar em um lead, abre uma página com todos os dados, ações rápidas (Fechou / Perdeu), observações da negociação com salvamento rápido e anexos das propostas de Locação e de A&B (PDF ou imagem, guardados em bucket privado do Supabase Storage).
 - **Cliente recorrente**: ao digitar telefone ou e-mail, o sistema avisa se o cliente já fez orçamentos anteriores.
 - **Funil comercial**: situação em aberto, fechado ou perdido, com número de proposta obrigatório no fechamento e motivo obrigatório na perda.
 - **Dashboard**: solicitações recebidas, propostas enviadas, taxa de conversão, taxa de perda, composição dos valores, evolução no período, ranking dos motivos de perda e demanda por sala e por meio de prospecção.
-- **Consulta de leads**: filtros por período, situação, proposta, sala, meio de prospecção, motivo de recusa e busca por texto, com ordenação e paginação.
+- **Consulta de leads**: filtros por período (o filtro por data do evento considera eventos de vários dias), situação, proposta, sala, meio de prospecção, empresa (uma empresa, só empresas ou só pessoa física), motivo de recusa e busca por texto, com ordenação e paginação.
 - **Follow-up pelo WhatsApp**: botão com mensagem pronta, personalizada com o nome do cliente e as salas de interesse.
-- **Exportações**: Excel completo com totais, mailing CSV sem contatos duplicados e relatório PDF com resumo dos filtros.
-- **LGPD**: opt-out de comunicações por lead (o contato sai do mailing) e exclusão definitiva de leads.
-- **Painel Admin**: cadastro das salas, meios de prospecção e motivos de perda, sem alterar código.
+- **Exportações**: Excel completo com totais (data de criação como data pura), mailing CSV sem contatos duplicados e relatório PDF com resumo dos filtros. Antes de baixar, uma pré-visualização mostra o resumo e as primeiras linhas do arquivo.
+- **LGPD**: opt-out de comunicações por contato. Marcar em um lead vale para todos os leads com o mesmo e-mail ou telefone, inclusive os futuros, e continua valendo depois da exclusão (lista de supressão no banco). O contato nunca sai no mailing, e o cadastro avisa quando o cliente pediu opt-out. Inclui exclusão definitiva de leads.
+- **Painel Admin**: cadastro das salas, meios de prospecção e motivos de perda, sem alterar código, e gestão de usuários (ativar/desativar acesso e definir quem é administrador).
+- **Login e perfil**: "Manter-me logado", "Salvar credenciais" (guarda só o usuário, nunca a senha), "Esqueci minha senha" por e-mail, troca de senha e foto de perfil.
 - **Tema claro e escuro** e layout responsivo.
 
 ## Tecnologias
@@ -53,10 +55,33 @@ npm run dev
 No SQL Editor do Supabase:
 
 1. **Projeto novo**: rode `supabase/schema.sql`. Ele cria as tabelas, as políticas de acesso (apenas usuários autenticados) e os motivos de perda padrão.
-2. **Projeto já existente**: rode as migrações de `supabase/migrations/` em ordem. Todas podem ser executadas mais de uma vez sem duplicar dados.
-3. **Dados de teste (opcional)**: `supabase/seed_leads_teste.sql` cria 11 leads fictícios, que podem ser removidos com o comando indicado no próprio arquivo.
+2. **Projeto já existente**: rode as migrações de `supabase/migrations/` em ordem (002 a 007). Todas podem ser executadas mais de uma vez sem duplicar dados. A 007 cria os perfis de usuário (copiando os ADMINs da antiga tabela `app_admins`), a coluna de observações, a tabela de anexos e os buckets privados `lead-attachments` e `avatars` do Storage.
+3. **Recuperação de senha**: em Authentication → URL Configuration, inclua em *Redirect URLs* o endereço da tela de nova senha, por exemplo `https://vanovmoretto.github.io/lead-manager/redefinir-senha` e `http://localhost:5173/redefinir-senha`.
+4. **Dados de teste (opcional)**: `supabase/seed_leads_teste.sql` cria 11 leads fictícios, que podem ser removidos com o comando indicado no próprio arquivo.
 
-Depois, crie os usuários da equipe em **Authentication → Users → Add user**.
+## Usuários e papéis
+
+Os usuários são **criados no Supabase**; o acesso e a permissão de cada um são ajustados no Painel Admin.
+
+- **Criar usuário**: Authentication → Users → Add user, com o e-mail `nome.sobrenome@swanhoteis.com.br`. No login, basta digitar `nome.sobrenome`: o app completa o domínio. Quem usa outro domínio digita o e-mail completo. O perfil é criado automaticamente como usuário comum ativo.
+- **Ativar, desativar ou tornar ADMIN**: Painel Admin → Usuários. Usuário desativado é desconectado e não lê nem grava nenhum dado (a regra está no banco). Ninguém altera o próprio acesso, o que evita ficar sem administrador.
+- **Mudar e-mail ou usuário**: edite o e-mail do usuário em Authentication → Users. O nome exibido no app é a parte antes do `@`.
+- **Remover de vez**: exclua o usuário em Authentication → Users (o perfil sai junto).
+
+### Papéis
+
+| Ação | Usuário | ADMIN |
+| --- | --- | --- |
+| Ver, criar e editar leads, observações e anexos | ✓ | ✓ |
+| Excluir leads e anexos | | ✓ |
+| Painel Admin (opções dos formulários e usuários) | | ✓ |
+
+As regras ficam no banco (políticas de RLS com `public.is_admin()` e `public.is_active_user()`, a partir da tabela `public.user_profiles`); a interface apenas esconde o que o usuário não pode fazer. O primeiro ADMIN, se ainda não houver nenhum, é definido no SQL Editor:
+
+```sql
+update public.user_profiles set is_admin = true, is_active = true
+where email = 'admin@suaempresa.com.br';
+```
 
 ## Scripts
 
@@ -84,7 +109,8 @@ Use `npm run build` com a pasta `dist`. Os arquivos `vercel.json` e `public/_red
 
 ## Segurança
 
-- Todas as tabelas usam Row Level Security: somente usuários autenticados leem e gravam dados.
+- Todas as tabelas usam Row Level Security: somente usuários autenticados e com acesso ativo leem e gravam dados.
+- Anexos e fotos de perfil ficam em buckets privados do Supabase Storage e são abertos por links temporários. Cada usuário só envia foto para a própria pasta; anexos só entram na pasta de um lead existente.
 - A chave usada no front-end é a chave pública (anon/publishable) do Supabase; a proteção dos dados vem das políticas do banco. Nunca use a chave `service_role` no front-end.
 - As exportações neutralizam textos que poderiam ser interpretados como fórmulas no Excel.
 
@@ -94,9 +120,9 @@ Use `npm run build` com a pasta `dist`. Os arquivos `vercel.json` e `public/_red
 src/
   components/   Layout, formulário de lead e componentes compartilhados
   contexts/     Autenticação e tema
-  hooks/        Opções do Painel Admin e detecção de cliente recorrente
-  lib/          Cliente Supabase, consultas, formatação, exportações e WhatsApp
-  pages/        Login, Dashboard, Consulta de Leads e Painel Admin
+  hooks/        Opções do Painel Admin, cliente recorrente, empresas e fotos de perfil
+  lib/          Cliente Supabase, consultas, formatação, exportações, anexos e WhatsApp
+  pages/        Login, nova senha, Dashboard, Consulta e Detalhes do lead, Perfil e Painel Admin
   types/        Tipos do domínio e do banco
 supabase/
   schema.sql    Estrutura completa do banco

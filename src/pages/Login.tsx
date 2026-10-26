@@ -1,10 +1,34 @@
 import { useState, type FormEvent } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
-import { CalendarHeart, CircleAlert, Eye, EyeOff, LoaderCircle, Lock, Mail } from 'lucide-react'
+import { CalendarHeart, CircleAlert, CircleCheck, Eye, EyeOff, LoaderCircle, Lock, User } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import ThemeToggle from '../components/ThemeToggle'
 import type { RedirectState } from '../components/PrivateRoute'
 import { cn } from '../lib/utils'
+import { getRememberSession } from '../lib/supabase'
+
+/** "Salvar credenciais": guarda só o usuário (nunca a senha) para preencher no próximo acesso. */
+const SAVED_USERNAME_KEY = 'gestao-leads-usuario-salvo'
+
+function readSavedUsername(): string {
+  try {
+    return window.localStorage.getItem(SAVED_USERNAME_KEY) ?? ''
+  } catch {
+    return ''
+  }
+}
+
+function writeSavedUsername(username: string | null): void {
+  try {
+    if (username) window.localStorage.setItem(SAVED_USERNAME_KEY, username)
+    else window.localStorage.removeItem(SAVED_USERNAME_KEY)
+  } catch {
+    // Navegador sem localStorage: apenas não lembra o usuário
+  }
+}
+
+const checkboxClassName =
+  'h-4 w-4 rounded border-slate-300 text-brand-600 accent-brand-600 focus:ring-brand-600 dark:border-slate-600 dark:bg-slate-900'
 
 const inputClassName = cn(
   'block w-full rounded-lg border border-slate-200 bg-white py-2.5 pl-10 pr-3 text-sm text-slate-900 shadow-sm',
@@ -15,34 +39,41 @@ const inputClassName = cn(
 )
 
 export default function Login() {
-  const { session, loading, signIn } = useAuth()
+  const { session, loading, signIn, requestPasswordReset, accessNotice, clearAccessNotice, passwordRecovery } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
 
-  const [email, setEmail] = useState('')
+  const [identifier, setIdentifier] = useState(readSavedUsername)
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
+  const [remember, setRemember] = useState(getRememberSession)
+  const [saveUsername, setSaveUsername] = useState(() => readSavedUsername() !== '')
   const [submitting, setSubmitting] = useState(false)
+  const [sendingReset, setSendingReset] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [info, setInfo] = useState<string | null>(null)
 
   const redirectTo = (location.state as RedirectState | null)?.from ?? '/'
 
-  // Já logado: vai direto para o app
+  // Já logado: vai direto para o app (ou para definir a nova senha, se veio do link de recuperação)
   if (!loading && session) {
-    return <Navigate to={redirectTo} replace />
+    return <Navigate to={passwordRecovery ? '/redefinir-senha' : redirectTo} replace />
   }
+
+  const busy = submitting || sendingReset
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     setError(null)
+    setInfo(null)
 
-    if (!email.trim() || !password) {
-      setError('Informe e-mail e senha.')
+    if (!identifier.trim() || !password) {
+      setError('Informe usuário e senha.')
       return
     }
 
     setSubmitting(true)
-    const result = await signIn(email, password)
+    const result = await signIn(identifier, password, { remember })
     setSubmitting(false)
 
     if (result.error) {
@@ -50,7 +81,31 @@ export default function Login() {
       return
     }
 
+    writeSavedUsername(saveUsername ? identifier.trim() : null)
     navigate(redirectTo, { replace: true })
+  }
+
+  const handleForgotPassword = async () => {
+    setError(null)
+    setInfo(null)
+    clearAccessNotice()
+
+    if (!identifier.trim()) {
+      setError('Informe seu usuário para receber o link de redefinição de senha.')
+      document.getElementById('username')?.focus()
+      return
+    }
+
+    setSendingReset(true)
+    const result = await requestPasswordReset(identifier)
+    setSendingReset(false)
+
+    if (result.error) {
+      setError(result.error)
+      return
+    }
+    // Mensagem neutra: não revela se o usuário existe
+    setInfo('Se o usuário estiver cadastrado, você receberá um e-mail com o link para criar uma nova senha.')
   }
 
   return (
@@ -99,26 +154,28 @@ export default function Login() {
 
           <div className="rounded-2xl border border-slate-200 bg-white p-8 shadow-sm dark:border-slate-800 dark:bg-slate-900">
             <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Entrar</h2>
-            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Use seu e-mail e senha cadastrados.</p>
+            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Use seu usuário e senha cadastrados.</p>
 
             <form onSubmit={handleSubmit} className="mt-8 space-y-5" noValidate>
               <div>
-                <label htmlFor="email" className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">
-                  E-mail
+                <label htmlFor="username" className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">
+                  Usuário
                 </label>
                 <div className="relative">
-                  <Mail
+                  <User
                     className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
                     aria-hidden="true"
                   />
                   <input
-                    id="email"
-                    type="email"
-                    autoComplete="email"
-                    placeholder="voce@empresa.com.br"
-                    value={email}
-                    onChange={(event) => setEmail(event.target.value)}
-                    disabled={submitting}
+                    id="username"
+                    type="text"
+                    autoComplete="username"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    placeholder="Usuário"
+                    value={identifier}
+                    onChange={(event) => setIdentifier(event.target.value)}
+                    disabled={busy}
                     className={inputClassName}
                     required
                   />
@@ -141,7 +198,7 @@ export default function Login() {
                     placeholder="••••••••"
                     value={password}
                     onChange={(event) => setPassword(event.target.value)}
-                    disabled={submitting}
+                    disabled={busy}
                     className={cn(inputClassName, 'pr-10')}
                     required
                   />
@@ -160,6 +217,60 @@ export default function Login() {
                 </div>
               </div>
 
+              <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
+                <div className="space-y-2">
+                  <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
+                    <input
+                      type="checkbox"
+                      checked={remember}
+                      onChange={(event) => setRemember(event.target.checked)}
+                      disabled={busy}
+                      className={checkboxClassName}
+                    />
+                    Manter-me logado
+                  </label>
+                  <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
+                    <input
+                      type="checkbox"
+                      checked={saveUsername}
+                      onChange={(event) => setSaveUsername(event.target.checked)}
+                      disabled={busy}
+                      className={checkboxClassName}
+                    />
+                    Salvar credenciais
+                  </label>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void handleForgotPassword()}
+                  disabled={busy}
+                  className="inline-flex items-center gap-1.5 text-sm font-semibold text-brand-600 hover:underline disabled:cursor-not-allowed disabled:opacity-60 dark:text-brand-400"
+                >
+                  {sendingReset && <LoaderCircle className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />}
+                  Esqueci minha senha
+                </button>
+              </div>
+
+              {accessNotice && !error && (
+                <div
+                  role="alert"
+                  className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300"
+                >
+                  <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                  <span>{accessNotice}</span>
+                </div>
+              )}
+
+              {info && (
+                <div
+                  role="status"
+                  className="flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-sm text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300"
+                >
+                  <CircleCheck className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                  <span>{info}</span>
+                </div>
+              )}
+
               {error && (
                 <div
                   role="alert"
@@ -172,7 +283,7 @@ export default function Login() {
 
               <button
                 type="submit"
-                disabled={submitting}
+                disabled={busy}
                 className={cn(
                   'flex w-full items-center justify-center gap-2 rounded-lg bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors',
                   'hover:bg-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 focus-visible:ring-offset-2',

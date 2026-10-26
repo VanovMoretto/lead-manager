@@ -106,10 +106,26 @@ cross join rooms r
 cross join origins o
 order by s.n;
 
+-- Empresa e evento de vários dias (migração 006): alguns leads de empresas, o resto pessoa física
+update public.leads set company = 'Construtora Alfa', event_end_date = event_date + 2
+ where contact_email = 'carlos.lima@teste.exemplo.com';
+update public.leads set company = 'Construtora Alfa'
+ where contact_email = 'lucas.pereira@teste.exemplo.com';
+update public.leads set company = 'Banco Horizonte', event_end_date = event_date + 1
+ where contact_email = 'aline.ribeiro@teste.exemplo.com';
+update public.leads set company = 'Instituto Vida'
+ where contact_email = 'fernanda.alves@teste.exemplo.com';
+
+-- Observações da negociação (migração 007)
+update public.leads set observations = 'Pediu duas opções de cardápio. Retornar até sexta com a proposta revisada.'
+ where contact_email = 'carlos.lima@teste.exemplo.com';
+update public.leads set observations = 'Decisão depende da aprovação da diretoria na próxima reunião.'
+ where contact_email = 'aline.ribeiro@teste.exemplo.com';
+
 commit;
 
 -- Conferência
-select contact_name, status, room_interest, total_value, created_at::date
+select contact_name, company, status, room_interest, event_date, event_end_date, total_value, created_at::date
 from public.leads
 where (contact_email like '%@teste.exemplo.com' or contact_phone = '(11) 96543-2109')
 order by created_at;

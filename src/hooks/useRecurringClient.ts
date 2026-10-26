@@ -7,11 +7,12 @@ import type { Lead } from '../types/lead'
 const DEBOUNCE_MS = 600
 const MAX_ROWS_PER_QUERY = 100
 
-const PREVIOUS_LEAD_COLUMNS = 'id, created_at, status, room_interests, room_interest, contact_phone_digits, contact_email'
+const PREVIOUS_LEAD_COLUMNS =
+  'id, created_at, status, room_interests, room_interest, contact_phone_digits, contact_email, marketing_opt_out'
 
 export type PreviousLead = Pick<
   Lead,
-  'id' | 'created_at' | 'status' | 'room_interests' | 'room_interest' | 'contact_phone_digits' | 'contact_email'
+  'id' | 'created_at' | 'status' | 'room_interests' | 'room_interest' | 'contact_phone_digits' | 'contact_email' | 'marketing_opt_out'
 >
 
 export type RecurringClientMatch = {
@@ -24,11 +25,20 @@ export type RecurringClientMatch = {
   matchedByEmail: boolean
 }
 
-/** Busca leads anteriores com o mesmo telefone (dígitos) ou o mesmo e-mail (sem diferenciar maiúsculas). */
-async function findPreviousLeads(phoneDigits: string, email: string, excludeId?: string): Promise<RecurringClientMatch | null> {
-  const requests = []
+export type RecurringClientResult = {
+  match: RecurringClientMatch | null
+  /**
+   * O contato pediu opt-out de comunicações (LGPD): está na lista de supressão
+   * (vale mesmo que os leads antigos tenham sido excluídos) ou algum lead anterior tem opt-out.
+   */
+  suppressed: boolean
+}
+
+/** Busca leads anteriores e a lista de supressão pelo mesmo telefone (dígitos) ou e-mail (sem diferenciar maiúsculas). */
+async function findPreviousLeads(phoneDigits: string, email: string, excludeId?: string): Promise<RecurringClientResult> {
+  const leadRequests = []
   if (phoneDigits) {
-    requests.push(
+    leadRequests.push(
       supabase
         .from('leads')
         .select(PREVIOUS_LEAD_COLUMNS)
@@ -38,7 +48,7 @@ async function findPreviousLeads(phoneDigits: string, email: string, excludeId?:
     )
   }
   if (email) {
-    requests.push(
+    leadRequests.push(
       supabase
         .from('leads')
         .select(PREVIOUS_LEAD_COLUMNS)
@@ -48,7 +58,18 @@ async function findPreviousLeads(phoneDigits: string, email: string, excludeId?:
     )
   }
 
-  const responses = await Promise.all(requests)
+  const suppressionKeys = [
+    ...(email ? [{ kind: 'email' as const, value: email }] : []),
+    ...(phoneDigits ? [{ kind: 'phone' as const, value: phoneDigits }] : []),
+  ]
+  const suppressionRequest = Promise.all(
+    suppressionKeys.map((key) =>
+      supabase.from('marketing_suppressions').select('id').eq('kind', key.kind).eq('value', key.value).limit(1),
+    ),
+  )
+
+  const [responses, suppressionResponses] = await Promise.all([Promise.all(leadRequests), suppressionRequest])
+
   const byId = new Map<string, PreviousLead>()
   for (const response of responses) {
     if (response.error) throw response.error
@@ -57,14 +78,21 @@ async function findPreviousLeads(phoneDigits: string, email: string, excludeId?:
     }
   }
 
+  // A lista de supressão é a fonte principal; se ela não estiver disponível, os leads anteriores ainda avisam
+  const suppressedByList = suppressionResponses.some((response) => !response.error && (response.data?.length ?? 0) > 0)
   const rows = [...byId.values()].sort((a, b) => b.created_at.localeCompare(a.created_at))
-  if (rows.length === 0) return null
+  const suppressed = suppressedByList || rows.some((row) => row.marketing_opt_out)
+
+  if (rows.length === 0) return { match: null, suppressed }
 
   return {
-    count: rows.length,
-    last: rows[0],
-    matchedByPhone: Boolean(phoneDigits) && rows.some((row) => row.contact_phone_digits === phoneDigits),
-    matchedByEmail: Boolean(email) && rows.some((row) => row.contact_email?.toLowerCase() === email),
+    match: {
+      count: rows.length,
+      last: rows[0],
+      matchedByPhone: Boolean(phoneDigits) && rows.some((row) => row.contact_phone_digits === phoneDigits),
+      matchedByEmail: Boolean(email) && rows.some((row) => row.contact_email?.toLowerCase() === email),
+    },
+    suppressed,
   }
 }
 
@@ -77,12 +105,14 @@ type UseRecurringClientParams = {
   excludeId?: string
 }
 
-type RecurringState = { key: string; match: RecurringClientMatch | null }
+type RecurringState = { key: string; result: RecurringClientResult }
+
+const EMPTY_RESULT: RecurringClientResult = { match: null, suppressed: false }
 
 /**
- * Detecta cliente recorrente enquanto o vendedor digita telefone/e-mail.
+ * Detecta cliente recorrente e opt-out (LGPD) enquanto o vendedor digita telefone/e-mail.
  * Espera o usuário parar de digitar e só consulta com telefone completo ou e-mail válido.
- * Falhas de rede são silenciosas: o aviso é informativo e nunca bloqueia o cadastro.
+ * Falhas de rede são silenciosas: o aviso é informativo, e o banco aplica o opt-out de qualquer forma.
  */
 export function useRecurringClient({ phone, email, enabled, excludeId }: UseRecurringClientParams) {
   const phoneDigits = isValidPhoneBR(phone) ? onlyDigits(phone) : ''
@@ -96,11 +126,11 @@ export function useRecurringClient({ phone, email, enabled, excludeId }: UseRecu
     let isActive = true
     const timeout = window.setTimeout(() => {
       findPreviousLeads(phoneDigits, normalizedEmail, excludeId)
-        .then((match) => {
-          if (isActive) setState({ key, match })
+        .then((result) => {
+          if (isActive) setState({ key, result })
         })
         .catch(() => {
-          if (isActive) setState({ key, match: null })
+          if (isActive) setState({ key, result: EMPTY_RESULT })
         })
     }, DEBOUNCE_MS)
 
@@ -110,8 +140,10 @@ export function useRecurringClient({ phone, email, enabled, excludeId }: UseRecu
     }
   }, [key, phoneDigits, normalizedEmail, excludeId])
 
+  const result = key !== '' && state?.key === key ? state.result : EMPTY_RESULT
   return {
     checking: key !== '' && state?.key !== key,
-    match: key !== '' && state?.key === key ? state.match : null,
+    match: result.match,
+    suppressed: result.suppressed,
   }
 }

@@ -8,10 +8,9 @@ import { jsPDF } from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { formatBRL, formatDateBR, formatPhoneBR } from './format'
 import { toLocalISODate } from './dashboard'
-import { describeFilters, type LeadSearchFilters } from './leadQuery'
-import { formatLeadRooms, getLeadValues, hasAnyValue, type LeadValueBreakdown } from './leadFields'
+import { formatLeadEventPeriod, formatLeadRooms, getLeadValues, hasAnyValue, type LeadValueBreakdown } from './leadFields'
 import { normalizeEmail, normalizePhoneDigits } from './contactIdentity'
-import { LEAD_STATUS_LABELS, type Lead } from '../types/lead'
+import { LEAD_STATUS_LABELS, type Lead, type MarketingSuppression } from '../types/lead'
 
 // =============================================================================
 // Utilitários
@@ -22,12 +21,20 @@ function timestampForFilename(date = new Date()): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}_${pad(date.getHours())}${pad(date.getMinutes())}`
 }
 
-function formatDateTimeBR(timestamp: string): string {
-  return new Date(timestamp).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })
+/**
+ * Data de criação (dia local, sem horário) como número de série do Excel,
+ * para a coluna ser filtrada e ordenada como data.
+ */
+function toExcelDateSerial(timestamp: string): number {
+  const [year, month, day] = toLocalISODate(new Date(timestamp)).split('-').map(Number)
+  // 25569 = dias entre 1900-01-00 (base do Excel) e 1970-01-01
+  return Date.UTC(year, month - 1, day) / 86_400_000 + 25569
 }
 
+/** "20/11/2026", "20/11/2026 a 22/11/2026 (3 dias)" ou "Sem data (previsão)". */
 function formatEventDate(lead: Lead): string {
-  if (lead.event_date) return formatDateBR(lead.event_date)
+  const period = formatLeadEventPeriod(lead)
+  if (period) return period
   return lead.date_notes ? `Sem data (${lead.date_notes})` : 'Sem data'
 }
 
@@ -79,11 +86,13 @@ function sumValues(leads: Lead[]): LeadValueBreakdown {
 // =============================================================================
 
 const CURRENCY_FORMAT = '"R$" #,##0.00'
+const DATE_FORMAT = 'dd/mm/yyyy'
 
 export function exportLeadsToXlsx(leads: Lead[]): void {
   const header = [
     'Criado em',
     'Contato',
+    'Empresa',
     'Telefone',
     'E-mail',
     'Meio de prospecção',
@@ -94,22 +103,25 @@ export function exportLeadsToXlsx(leads: Lead[]): void {
     'Locação / Espaço (R$)',
     'A&B (R$)',
     'Hospedagem (R$)',
-    'Valor Total (R$)',
+    'Receita Total (R$)',
     'Proposta enviada',
     'Nº da proposta',
     'Situação',
     'Motivo de perda',
     'Detalhes da perda',
     'Opt-out LGPD',
+    'Observações',
   ]
-  // Colunas numéricas de valor (J, K, L, M)
-  const valueColumns = [9, 10, 11, 12]
+  const dateColumn = 0
+  // Colunas numéricas de valor (K, L, M, N)
+  const valueColumns = [10, 11, 12, 13]
 
   const rows: Array<Array<string | number | null>> = leads.map((lead) => {
     const values = getLeadValues(lead)
     return sanitizeRow<string | number | null>([
-      formatDateTimeBR(lead.created_at),
+      toExcelDateSerial(lead.created_at),
       lead.contact_name,
+      lead.company ?? '',
       lead.contact_phone ?? '',
       lead.contact_email ?? '',
       lead.origin ?? '',
@@ -128,6 +140,7 @@ export function exportLeadsToXlsx(leads: Lead[]): void {
       lead.loss_reason ?? '',
       lead.loss_reason_details ?? '',
       yesNo(lead.marketing_opt_out),
+      lead.observations ?? '',
     ])
   })
 
@@ -152,8 +165,10 @@ export function exportLeadsToXlsx(leads: Lead[]): void {
     sheet['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: totalsRow, c: header.length - 1 } })
   }
 
-  // Formato de moeda nas colunas de valor
+  // Formato de data e de moeda
   for (let rowIndex = 1; rowIndex <= lastDataRow; rowIndex += 1) {
+    const dateCell = sheet[XLSX.utils.encode_cell({ r: rowIndex, c: dateColumn })]
+    if (dateCell && typeof dateCell.v === 'number') dateCell.z = DATE_FORMAT
     for (const column of valueColumns) {
       const cell = sheet[XLSX.utils.encode_cell({ r: rowIndex, c: column })]
       if (cell && typeof cell.v === 'number') cell.z = CURRENCY_FORMAT
@@ -162,6 +177,7 @@ export function exportLeadsToXlsx(leads: Lead[]): void {
 
   // Largura das colunas pelo maior conteúdo (limitada)
   sheet['!cols'] = header.map((title, columnIndex) => {
+    if (columnIndex === dateColumn) return { wch: 12 }
     const longest = rows.reduce((max, row) => Math.max(max, String(row[columnIndex] ?? '').length), title.length)
     return { wch: Math.min(Math.max(longest + 2, 10), 50) }
   })
@@ -185,6 +201,8 @@ function csvField(value: string): string {
 /** Um contato único do mailing (vários orçamentos do mesmo cliente viram uma linha). */
 export type MailingContact = {
   name: string
+  /** Empresa mais recente informada para o contato (vazio = pessoa física). */
+  company: string
   email: string
   phone: string
   rooms: string
@@ -218,7 +236,17 @@ export type MailingSummary = {
  * Os vínculos são transitivos: se o lead A tem o e-mail do B e o B tem o telefone do C, os três são o mesmo contato.
  * Cada grupo vira uma linha com os dados do orçamento mais recente.
  */
-export function groupMailingContacts(leads: Lead[]): MailingContact[] {
+/** Chaves da lista de supressão (LGPD) já normalizadas, para consulta rápida. */
+export type SuppressionKeys = { emails: Set<string>; phones: Set<string> }
+
+export function toSuppressionKeys(rows: Array<Pick<MarketingSuppression, 'kind' | 'value'>>): SuppressionKeys {
+  return {
+    emails: new Set(rows.filter((row) => row.kind === 'email').map((row) => row.value)),
+    phones: new Set(rows.filter((row) => row.kind === 'phone').map((row) => row.value)),
+  }
+}
+
+export function groupMailingContacts(leads: Lead[], suppression?: SuppressionKeys): MailingContact[] {
   const contactable = leads.filter((lead) => normalizeEmail(lead.contact_email) || normalizePhoneDigits(lead))
 
   // Union-find: cada lead começa no próprio grupo; leads que dividem e-mail/telefone são unidos
@@ -261,6 +289,7 @@ export function groupMailingContacts(leads: Lead[]): MailingContact[] {
       const withRooms = sorted.find((lead) => formatLeadRooms(lead))
       return {
         name: latest.contact_name,
+        company: sorted.find((lead) => lead.company)?.company ?? '',
         email,
         phone,
         rooms: withRooms ? formatLeadRooms(withRooms, ', ') : '',
@@ -269,23 +298,56 @@ export function groupMailingContacts(leads: Lead[]): MailingContact[] {
         everClosed: group.some((lead) => lead.status === 'fechado'),
         latestAt: latest.created_at,
         // Basta um orçamento com opt-out para o contato inteiro sair do mailing
-        optedOut: group.some((lead) => lead.marketing_opt_out),
+        optedOut: group.some(
+          (lead) =>
+            lead.marketing_opt_out ||
+            // Opt-out por contato: vale mesmo para leads fora do filtro ou já excluídos
+            Boolean(suppression?.emails.has(normalizeEmail(lead.contact_email) ?? '')) ||
+            Boolean(suppression?.phones.has(normalizePhoneDigits(lead) ?? '')),
+        ),
       }
     })
     .sort((a, b) => b.latestAt.localeCompare(a.latestAt))
 }
 
-export function exportMailingToCsv(leads: Lead[]): MailingSummary {
-  const header = ['Nome', 'Email', 'Telefone', 'Sala de Interesse', 'Status', 'Qtd Solicitações', 'Já Fechou Evento?']
-  const grouped = groupMailingContacts(leads)
+export type MailingPreview = {
+  /** Contatos que vão para o arquivo (já sem os de opt-out). */
+  contacts: MailingContact[]
+  summary: MailingSummary
+}
+
+/**
+ * Agrupa e filtra os contatos do mailing sem gerar o arquivo (usado na pré-visualização).
+ * `suppressions` é a lista de opt-out por contato (LGPD) inteira, não só a do filtro:
+ * um contato que pediu opt-out em qualquer lead, atual ou excluído, nunca sai no mailing.
+ */
+export function buildMailing(leads: Lead[], suppressions: Array<Pick<MarketingSuppression, 'kind' | 'value'>>): MailingPreview {
+  const grouped = groupMailingContacts(leads, toSuppressionKeys(suppressions))
   const contacts = grouped.filter((contact) => !contact.optedOut)
   const leadsWithContact = leads.filter((lead) => normalizeEmail(lead.contact_email) || normalizePhoneDigits(lead)).length
 
+  return {
+    contacts,
+    summary: {
+      contacts: contacts.length,
+      leadsWithContact,
+      skipped: leads.length - leadsWithContact,
+      optedOut: grouped.length - contacts.length,
+      mergedDuplicates: contacts.reduce((sum, contact) => sum + contact.requests - 1, 0),
+    },
+  }
+}
+
+/** Gera o CSV a partir de um mailing já montado por `buildMailing`. */
+export function exportMailingToCsv(mailing: MailingPreview): MailingSummary {
+  const header = ['Nome', 'Empresa', 'Email', 'Telefone', 'Sala de Interesse', 'Status', 'Qtd Solicitações', 'Já Fechou Evento?']
+
   const lines = [
     header.join(';'),
-    ...contacts.map((contact) =>
+    ...mailing.contacts.map((contact) =>
       [
         contact.name,
+        contact.company,
         contact.email,
         contact.phone,
         contact.rooms,
@@ -303,13 +365,7 @@ export function exportMailingToCsv(leads: Lead[]): MailingSummary {
   const blob = new Blob(['\uFEFF' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' })
   downloadBlob(blob, `mailing_${timestampForFilename()}.csv`)
 
-  return {
-    contacts: contacts.length,
-    leadsWithContact,
-    skipped: leads.length - leadsWithContact,
-    optedOut: grouped.length - contacts.length,
-    mergedDuplicates: contacts.reduce((sum, contact) => sum + contact.requests - 1, 0),
-  }
+  return mailing.summary
 }
 
 // =============================================================================
@@ -325,7 +381,8 @@ const SLATE_900: [number, number, number] = [15, 23, 42]
 /** Índice da coluna "Situação" na tabela do PDF (colorida por status). */
 const PDF_STATUS_COLUMN = 10
 
-export function exportLeadsToPdf(leads: Lead[], filters: LeadSearchFilters): void {
+/** `filterLabels`: descrição dos filtros aplicados (`describeFilters`). */
+export function exportLeadsToPdf(leads: Lead[], filterLabels: string[]): void {
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
   const pageWidth = doc.internal.pageSize.getWidth()
   const pageHeight = doc.internal.pageSize.getHeight()
@@ -351,7 +408,7 @@ export function exportLeadsToPdf(leads: Lead[], filters: LeadSearchFilters): voi
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(9)
   doc.setTextColor(...SLATE_500)
-  const filterText = doc.splitTextToSize(describeFilters(filters).join('   |   '), pageWidth - margin * 2)
+  const filterText = doc.splitTextToSize(filterLabels.join('   |   '), pageWidth - margin * 2)
   doc.text(filterText, margin, cursorY + 5)
   cursorY += 5 + filterText.length * 4 + 4
 
@@ -392,14 +449,14 @@ export function exportLeadsToPdf(leads: Lead[], filters: LeadSearchFilters): voi
     ['Fechados', String(closed.length)],
     ['Perdidos', String(lost)],
     ['Conversão', conversion],
-    ['Valor total orçado', formatBRL(allValues.total)],
+    ['Receita total orçada', formatBRL(allValues.total)],
   ])
   drawBoxes(
     [
       ['Fechado | Locação', formatBRL(closedValues.rental)],
       ['Fechado | A&B', formatBRL(closedValues.ab)],
       ['Fechado | Hospedagem', formatBRL(closedValues.lodging)],
-      ['Total fechado', formatBRL(closedValues.total)],
+      ['Receita total fechada', formatBRL(closedValues.total)],
     ],
     true,
   )
@@ -421,7 +478,7 @@ export function exportLeadsToPdf(leads: Lead[], filters: LeadSearchFilters): voi
         'Locação',
         'A&B',
         'Hospedagem',
-        'Total',
+        'Receita Total',
         'Proposta',
         'Situação',
         'Motivo de perda',
@@ -431,7 +488,7 @@ export function exportLeadsToPdf(leads: Lead[], filters: LeadSearchFilters): voi
       const values = getLeadValues(lead)
       return [
         formatDateBR(toLocalISODate(new Date(lead.created_at))),
-        lead.contact_name,
+        [lead.contact_name, lead.company].filter(Boolean).join('\n'),
         [lead.contact_phone, lead.contact_email].filter(Boolean).join('\n') || '-',
         [formatLeadRooms(lead, ', '), lead.origin].filter(Boolean).join('\n') || '-',
         formatEventDate(lead),

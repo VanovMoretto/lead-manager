@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
-import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
   CalendarHeart,
+  ChevronRight,
   CircleCheck,
   LayoutDashboard,
   LogOut,
@@ -17,6 +18,7 @@ import { cn } from '../lib/utils'
 import type { Lead } from '../types/lead'
 import LeadFormModal, { type LeadFormMode } from './LeadFormModal'
 import ThemeToggle from './ThemeToggle'
+import UserAvatar from './UserAvatar'
 
 /** Disponível nas páginas via `useOutletContext<LayoutOutletContext>()`. */
 export type LayoutOutletContext = {
@@ -33,12 +35,14 @@ type NavItem = {
   label: string
   icon: LucideIcon
   end?: boolean
+  /** Só aparece para usuários com papel ADMIN. */
+  adminOnly?: boolean
 }
 
 const NAV_ITEMS: NavItem[] = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
   { to: '/leads', label: 'Consultar Leads', icon: Search },
-  { to: '/admin', label: 'Painel Admin', icon: Settings },
+  { to: '/admin', label: 'Painel Admin', icon: Settings, adminOnly: true },
 ]
 
 function Brand() {
@@ -61,7 +65,10 @@ type SidebarContentProps = {
 }
 
 function SidebarContent({ onNewLead, onNavigate }: SidebarContentProps) {
-  const { user, signOut } = useAuth()
+  const { user, profile, signOut, isAdmin } = useAuth()
+  const navItems = NAV_ITEMS.filter((item) => !item.adminOnly || isAdmin)
+  // Só o ID do usuário (parte antes do @), sem o domínio
+  const username = user?.email?.split('@')[0] ?? ''
   const navigate = useNavigate()
   const [signingOut, setSigningOut] = useState(false)
 
@@ -97,7 +104,7 @@ function SidebarContent({ onNewLead, onNavigate }: SidebarContentProps) {
         <p className="px-3 pb-2 text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">
           Menu
         </p>
-        {NAV_ITEMS.map(({ to, label, icon: Icon, end }) => (
+        {navItems.map(({ to, label, icon: Icon, end }) => (
           <NavLink
             key={to}
             to={to}
@@ -131,15 +138,20 @@ function SidebarContent({ onNewLead, onNavigate }: SidebarContentProps) {
       </nav>
 
       <div className="space-y-1 border-t border-slate-200 px-3 py-4 dark:border-slate-800">
-        {user?.email && (
-          <div className="mb-2 flex items-center gap-3 px-3 py-1">
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-100 text-xs font-semibold uppercase text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-              {user.email.charAt(0)}
+        {username && (
+          <Link
+            to="/perfil"
+            onClick={onNavigate}
+            title="Editar perfil"
+            className="group mb-2 flex items-center gap-3 rounded-lg px-3 py-2 transition-colors hover:bg-slate-100 dark:hover:bg-slate-800"
+          >
+            <UserAvatar path={profile?.avatar_path} name={username} className="h-9 w-9" />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-medium text-slate-700 dark:text-slate-200">{username}</span>
+              <span className="block text-xs text-slate-500 dark:text-slate-400">Editar perfil</span>
             </span>
-            <p className="truncate text-sm text-slate-600 dark:text-slate-300" title={user.email}>
-              {user.email}
-            </p>
-          </div>
+            <ChevronRight className="h-4 w-4 shrink-0 text-slate-400 group-hover:text-slate-600 dark:group-hover:text-slate-300" aria-hidden="true" />
+          </Link>
         )}
         <ThemeToggle showLabel />
         <button
@@ -165,6 +177,8 @@ export default function Layout() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const [leadsVersion, setLeadsVersion] = useState(0)
   const [toast, setToast] = useState<{ id: number; message: string } | null>(null)
+  const location = useLocation()
+  const navigate = useNavigate()
 
   const openNewLead = useCallback(() => {
     setIsMobileMenuOpen(false)
@@ -189,10 +203,15 @@ export default function Layout() {
     })
   }, [])
 
-  const handleLeadDeleted = useCallback((lead: Lead) => {
-    setLeadsVersion((current) => current + 1)
-    setToast({ id: Date.now(), message: `Lead "${lead.contact_name}" excluído.` })
-  }, [])
+  const handleLeadDeleted = useCallback(
+    (lead: Lead) => {
+      setLeadsVersion((current) => current + 1)
+      setToast({ id: Date.now(), message: `Lead "${lead.contact_name}" excluído.` })
+      // Estava nos detalhes do lead excluído: volta para a consulta
+      if (location.pathname === `/leads/${lead.id}`) navigate('/leads', { replace: true })
+    },
+    [location.pathname, navigate],
+  )
 
   // Esconde o aviso de sucesso depois de alguns segundos
   useEffect(() => {

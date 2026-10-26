@@ -10,7 +10,7 @@ export function toWhatsAppNumber(phone: string | null | undefined): string | nul
   return null
 }
 
-/** "MARIANA souza" -> "Mariana" */
+/** "NOME sobrenome" -> "Nome" */
 function firstName(fullName: string): string {
   const first = fullName.trim().split(/\s+/)[0] ?? ''
   return first ? first.charAt(0).toLocaleUpperCase('pt-BR') + first.slice(1).toLocaleLowerCase('pt-BR') : ''

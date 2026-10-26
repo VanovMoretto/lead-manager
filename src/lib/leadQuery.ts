@@ -1,7 +1,7 @@
 import { supabase } from './supabase'
 import { formatDateBR, onlyDigits } from './format'
 import { rangeToTimestampBounds } from './dashboard'
-import { LEAD_STATUS_LABELS, type Lead, type LeadStatus } from '../types/lead'
+import { LEAD_STATUS_LABELS, type Lead, type LeadStatus, type MarketingSuppression } from '../types/lead'
 
 // =============================================================================
 // Filtros da consulta
@@ -21,6 +21,11 @@ export type LeadSearchFilters = {
   room: string
   /** Meio de prospecção. */
   origin: string
+  /**
+   * Empresa: '' (todas), COMPANY_FILTER_WITH (só empresas), COMPANY_FILTER_WITHOUT (pessoa física)
+   * ou o nome exato de uma empresa.
+   */
+  company: string
   lossReason: string
   search: string
 }
@@ -33,9 +38,14 @@ export const EMPTY_FILTERS: LeadSearchFilters = {
   proposalSent: 'all',
   room: '',
   origin: '',
+  company: '',
   lossReason: '',
   search: '',
 }
+
+/** Valores especiais do filtro de empresa (não colidem com nomes reais). */
+export const COMPANY_FILTER_WITH = '__com_empresa__'
+export const COMPANY_FILTER_WITHOUT = '__sem_empresa__'
 
 export const DATE_FIELD_LABELS: Record<DateField, string> = {
   created_at: 'Data de criação',
@@ -56,6 +66,7 @@ export function countActiveFilters(filters: LeadSearchFilters): number {
   if (filters.proposalSent !== 'all') count += 1
   if (filters.room) count += 1
   if (filters.origin) count += 1
+  if (filters.company) count += 1
   if (filters.lossReason) count += 1
   if (filters.search.trim()) count += 1
   return count
@@ -85,6 +96,7 @@ function buildSearchConditions(rawTerm: string): string | null {
     `contact_email.ilike.${pattern}`,
     `contact_phone.ilike.${pattern}`,
     `proposal_number.ilike.${pattern}`,
+    `company.ilike.${pattern}`,
   ]
 
   const digits = onlyDigits(term)
@@ -105,7 +117,7 @@ function toPgArrayLiteral(values: string[]): string {
  * Aplica os filtros a uma consulta de `leads`.
  * Genérico para servir tanto à listagem paginada quanto à exportação completa.
  */
-function applyFilters<Q extends { eq: any; gte: any; lt: any; lte: any; or: any; filter: any }>(query: Q, filters: LeadSearchFilters): Q {
+function applyFilters<Q extends { eq: any; gte: any; lt: any; lte: any; or: any; filter: any; not: any; is: any }>(query: Q, filters: LeadSearchFilters): Q {
   let next = query
 
   if (filters.dateField === 'created_at') {
@@ -116,7 +128,8 @@ function applyFilters<Q extends { eq: any; gte: any; lt: any; lte: any; or: any;
       next = next.lt('created_at', rangeToTimestampBounds({ from: filters.dateTo, to: filters.dateTo }).lt)
     }
   } else {
-    if (filters.dateFrom) next = next.gte('event_date', filters.dateFrom)
+    // Evento de vários dias entra quando qualquer dia dele cai no período (início <= Até e último dia >= De)
+    if (filters.dateFrom) next = next.gte('event_last_date', filters.dateFrom)
     if (filters.dateTo) next = next.lte('event_date', filters.dateTo)
   }
 
@@ -125,6 +138,9 @@ function applyFilters<Q extends { eq: any; gte: any; lt: any; lte: any; or: any;
   // Lead com várias salas: basta conter a sala filtrada
   if (filters.room) next = next.filter('room_interests', 'cs', toPgArrayLiteral([filters.room]))
   if (filters.origin) next = next.eq('origin', filters.origin)
+  if (filters.company === COMPANY_FILTER_WITH) next = next.not('company', 'is', null)
+  else if (filters.company === COMPANY_FILTER_WITHOUT) next = next.is('company', null)
+  else if (filters.company) next = next.eq('company', filters.company)
   if (filters.lossReason) next = next.eq('loss_reason', filters.lossReason)
 
   const searchConditions = buildSearchConditions(filters.search)
@@ -174,6 +190,26 @@ export async function fetchAllFilteredLeads(filters: LeadSearchFilters, sort: Le
   return rows
 }
 
+/**
+ * Lista completa de opt-out por contato (LGPD). Usada pelo mailing para suprimir contatos
+ * que pediram opt-out em leads fora do filtro ou já excluídos.
+ */
+export async function fetchMarketingSuppressions(): Promise<Array<Pick<MarketingSuppression, 'kind' | 'value'>>> {
+  const rows: Array<Pick<MarketingSuppression, 'kind' | 'value'>> = []
+  for (let offset = 0; ; offset += EXPORT_PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from('marketing_suppressions')
+      .select('kind, value')
+      .order('id', { ascending: true })
+      .range(offset, offset + EXPORT_PAGE_SIZE - 1)
+
+    if (error) throw error
+    rows.push(...(data ?? []))
+    if (!data || data.length < EXPORT_PAGE_SIZE) break
+  }
+  return rows
+}
+
 // =============================================================================
 // Descrição legível dos filtros (cabeçalho do PDF)
 // =============================================================================
@@ -190,6 +226,9 @@ export function describeFilters(filters: LeadSearchFilters): string[] {
   if (filters.proposalSent !== 'all') lines.push(`Proposta enviada: ${filters.proposalSent === 'yes' ? 'Sim' : 'Não'}`)
   if (filters.room) lines.push(`Sala/Salão: ${filters.room}`)
   if (filters.origin) lines.push(`Meio de prospecção: ${filters.origin}`)
+  if (filters.company === COMPANY_FILTER_WITH) lines.push('Empresa: somente empresas')
+  else if (filters.company === COMPANY_FILTER_WITHOUT) lines.push('Empresa: pessoa física (sem empresa)')
+  else if (filters.company) lines.push(`Empresa: ${filters.company}`)
   if (filters.lossReason) lines.push(`Motivo de perda: ${filters.lossReason}`)
   if (filters.search.trim()) lines.push(`Busca: "${filters.search.trim()}"`)
 

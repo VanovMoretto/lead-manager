@@ -33,8 +33,12 @@ import {
   toCents,
 } from '../lib/format'
 import { useSettingsOptions } from '../hooks/useSettingsOptions'
-import { getLeadRooms } from '../lib/leadFields'
+import { countEventDays, getLeadRooms } from '../lib/leadFields'
 import RecurringClientNotice from './RecurringClientNotice'
+import { useAuth } from '../contexts/AuthContext'
+import { useRecurringClient } from '../hooks/useRecurringClient'
+import { useCompanies } from '../hooks/useCompanies'
+import { fetchLeadAttachmentPaths, removeAttachmentFiles } from '../lib/leadAttachments'
 import {
   DEFAULT_LOSS_REASONS,
   LOSS_REASON_OTHER,
@@ -68,6 +72,8 @@ type FormState = {
   contact_name: string
   contact_phone: string
   contact_email: string
+  /** Empresa do contato (vazio = pessoa física). */
+  company: string
   /** Cliente pediu para não receber comunicações/mailing (LGPD). */
   marketing_opt_out: boolean
   origin: string
@@ -76,6 +82,9 @@ type FormState = {
   /** Checkbox "Cliente ainda sem data definida" (coluna is_date_flexible). */
   no_date: boolean
   event_date: string
+  /** Evento de mais de um dia: mostra a data final. */
+  multi_day: boolean
+  event_end_date: string
   date_notes: string
   /** Valores em centavos, para formatar a moeda sem erro de ponto flutuante. */
   /** Locação / Espaço (coluna proposed_value). */
@@ -101,11 +110,14 @@ function buildInitialState(lead?: Lead | null): FormState {
     contact_name: lead?.contact_name ?? '',
     contact_phone: lead?.contact_phone ? formatPhoneBR(lead.contact_phone) : '',
     contact_email: lead?.contact_email ?? '',
+    company: lead?.company ?? '',
     marketing_opt_out: lead?.marketing_opt_out ?? false,
     origin: lead?.origin ?? '',
     room_interests: lead ? [...getLeadRooms(lead)] : [],
     no_date: lead?.is_date_flexible ?? false,
     event_date: lead?.event_date ?? '',
+    multi_day: Boolean(lead?.event_end_date),
+    event_end_date: lead?.event_end_date ?? '',
     date_notes: lead?.date_notes ?? '',
     value_cents: toCents(lead?.proposed_value),
     has_ab: lead?.has_ab ?? false,
@@ -142,6 +154,15 @@ function validate(state: FormState): FormErrors {
   if (state.contact_email.trim() && !isValidEmail(state.contact_email)) {
     errors.contact_email = 'E-mail inválido.'
   }
+  if (!state.no_date && state.multi_day) {
+    if (state.event_end_date && !state.event_date) {
+      errors.event_date = 'Informe a data inicial.'
+    } else if (state.event_date && !state.event_end_date) {
+      errors.event_end_date = 'Informe a data final.'
+    } else if (state.event_date && state.event_end_date && state.event_end_date < state.event_date) {
+      errors.event_end_date = 'A data final precisa ser igual ou posterior à inicial.'
+    }
+  }
   if (state.status === 'fechado' && !state.proposal_number.trim()) {
     errors.proposal_number = 'Informe o número da proposta para registrar o fechamento.'
   }
@@ -156,7 +177,7 @@ function validate(state: FormState): FormErrors {
 }
 
 /** Monta o payload do banco, limpando campos que não se aplicam à situação escolhida. */
-function buildPayload(state: FormState): LeadInsert {
+function buildPayload(state: FormState, forceOptOut = false): LeadInsert {
   const isLost = state.status === 'perdido'
   const isClosed = state.status === 'fechado'
   const phoneDigits = onlyDigits(state.contact_phone)
@@ -165,11 +186,17 @@ function buildPayload(state: FormState): LeadInsert {
     contact_name: state.contact_name.trim(),
     contact_phone: phoneDigits.length > 0 ? formatPhoneBR(phoneDigits) : null,
     contact_email: state.contact_email.trim() ? state.contact_email.trim().toLowerCase() : null,
-    marketing_opt_out: state.marketing_opt_out,
+    company: state.company.trim().replace(/\s+/g, ' ') || null,
+    marketing_opt_out: state.marketing_opt_out || forceOptOut,
     origin: state.origin || null,
     room_interests: state.room_interests,
     is_date_flexible: state.no_date,
     event_date: state.no_date ? null : state.event_date || null,
+    // Mais de um dia só quando a data final é posterior à inicial; igual à inicial é evento de um dia
+    event_end_date:
+      !state.no_date && state.multi_day && state.event_date && state.event_end_date > state.event_date
+        ? state.event_end_date
+        : null,
     date_notes: state.no_date ? state.date_notes.trim() || null : null,
     proposed_value: state.value_cents === null ? null : state.value_cents / 100,
     has_ab: state.has_ab,
@@ -198,6 +225,9 @@ function translateDbError(error: PostgrestError): { message: string; field?: Fie
     if (error.message.includes('leads_contact_name_not_blank')) {
       return { message: 'Informe o nome do contato.', field: 'contact_name' }
     }
+    if (error.message.includes('leads_event_period_valid')) {
+      return { message: 'A data final precisa ser igual ou posterior à inicial.', field: 'event_end_date' }
+    }
     if (error.message.includes('_value_non_negative')) {
       return { message: 'Os valores da proposta não podem ser negativos.' }
     }
@@ -218,7 +248,7 @@ function translateDbError(error: PostgrestError): { message: string; field?: Fie
   return { message: 'Não foi possível salvar o lead. Tente novamente.' }
 }
 
-/** Valor global da proposta em centavos: locação + A&B + hospedagem (só o que estiver marcado). */
+/** Receita total da proposta em centavos: locação + A&B + hospedagem (só o que estiver marcado). */
 function computeTotalCents(state: FormState): number {
   return (state.value_cents ?? 0) + (state.has_ab ? state.ab_cents ?? 0 : 0) + (state.has_lodging ? state.lodging_cents ?? 0 : 0)
 }
@@ -396,7 +426,7 @@ const STATUS_OPTIONS: StatusOption[] = [
   {
     value: 'fechado',
     title: 'Fechou',
-    subtitle: 'Ganho',
+    subtitle: 'Fechado',
     icon: CircleCheck,
     selectedClassName: 'border-emerald-500 bg-emerald-50 ring-2 ring-emerald-500/30 dark:border-emerald-500 dark:bg-emerald-950/30',
     iconClassName: 'text-emerald-600 dark:text-emerald-400',
@@ -428,6 +458,8 @@ type LeadFormProps = {
 
 function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateChange }: LeadFormProps) {
   const mode: LeadFormMode = lead ? 'edit' : 'create'
+  // Excluir lead é exclusivo do ADMIN (o banco também recusa a exclusão de quem não é)
+  const { isAdmin } = useAuth()
   const initialState = useMemo(() => buildInitialState(lead), [lead])
 
   const [form, setForm] = useState<FormState>(initialState)
@@ -487,6 +519,26 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
   }, [form.has_ab, form.has_lodging])
 
   const totalCents = computeTotalCents(form)
+  const eventDays = form.multi_day
+    ? countEventDays({ event_date: form.event_date || null, event_end_date: form.event_end_date || null })
+    : null
+  // Empresas já cadastradas, sugeridas no campo Empresa
+  const { companies } = useCompanies()
+
+  // Opt-out por contato (LGPD): no cadastro, consulta leads anteriores e a lista de supressão
+  const recurring = useRecurringClient({
+    phone: form.contact_phone,
+    email: form.contact_email,
+    enabled: mode === 'create',
+  })
+  /** Contato já suprimido: o lead novo nasce com opt-out (o banco também garante isso). */
+  const optOutForced = mode === 'create' && recurring.suppressed
+  const optOutRevoking = mode === 'edit' && initialState.marketing_opt_out && !form.marketing_opt_out
+  const optOutHint = optOutForced
+    ? 'Marcado automaticamente: o contato está na lista de opt-out.'
+    : form.marketing_opt_out && !initialState.marketing_opt_out
+      ? 'Vale para todos os leads com o mesmo e-mail ou telefone, inclusive os futuros, e continua valendo se este lead for excluído.'
+      : null
   const lossReasonLabels = useMemo(() => {
     // Usa os motivos do Painel Admin; se não houver nenhum, cai nos motivos padrão
     const fromDb = options.loss_reason.map((option) => option.label)
@@ -544,7 +596,7 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
     setSubmitting(true)
     setSubmitError(null)
 
-    const payload = buildPayload(form)
+    const payload = buildPayload(form, optOutForced)
     const response = lead
       ? await supabase.from('leads').update(payload).eq('id', lead.id).select().single()
       : await supabase.from('leads').insert(payload).select().single()
@@ -573,12 +625,14 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
   const handleDelete = async () => {
     if (!lead || busy) return
     const confirmed = window.confirm(
-      `Excluir o lead "${lead.contact_name}"?\n\nEssa ação é permanente e remove todos os dados deste orçamento.`,
+      `Excluir o lead "${lead.contact_name}"?\n\nEssa ação é permanente e remove todos os dados deste orçamento, inclusive os anexos.`,
     )
     if (!confirmed) return
 
     setDeleting(true)
     setSubmitError(null)
+    // Os arquivos anexados saem do bucket junto com o lead
+    const attachmentPaths = await fetchLeadAttachmentPaths(lead.id)
     // .select() devolve as linhas apagadas: lista vazia = nada foi excluído (lead inexistente ou sem permissão)
     const { data, error } = await supabase.from('leads').delete().eq('id', lead.id).select('id')
     setDeleting(false)
@@ -592,10 +646,11 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
       return
     }
     if (!data || data.length === 0) {
-      setSubmitError('Este lead não foi excluído: ele já não existe ou você não tem permissão para excluí-lo.')
+      setSubmitError('Este lead não foi excluído: ele já não existe ou apenas o ADMIN pode excluir leads.')
       return
     }
 
+    await removeAttachmentFiles(attachmentPaths)
     onDeleted?.(lead)
     onCancel()
   }
@@ -632,7 +687,7 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
               type="text"
               autoFocus
               autoComplete="off"
-              placeholder="Ex.: Mariana Souza"
+              placeholder="Ex.: Nome do contato"
               value={form.contact_name}
               onChange={(event) => update('contact_name', event.target.value)}
               aria-invalid={Boolean(errors.contact_name)}
@@ -648,7 +703,7 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
                 type="tel"
                 inputMode="numeric"
                 autoComplete="off"
-                placeholder="(11) 98765-4321"
+                placeholder="Ex.: (51) 99999-8888"
                 value={form.contact_phone}
                 onChange={(event) => update('contact_phone', formatPhoneBR(event.target.value))}
                 aria-invalid={Boolean(errors.contact_phone)}
@@ -661,7 +716,7 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
                 id="lead-contact_email"
                 type="email"
                 autoComplete="off"
-                placeholder="contato@empresa.com.br"
+                placeholder="Ex.: email@dominio.com.br"
                 value={form.contact_email}
                 onChange={(event) => update('contact_email', event.target.value)}
                 aria-invalid={Boolean(errors.contact_email)}
@@ -671,21 +726,57 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
             </Field>
           </div>
 
-          {/* Só no cadastro: avisa se o telefone/e-mail já aparece em leads anteriores (não bloqueia) */}
-          {mode === 'create' && <RecurringClientNotice phone={form.contact_phone} email={form.contact_email} />}
-
-          <label className="flex w-fit cursor-pointer items-start gap-2.5 text-sm text-slate-600 dark:text-slate-300">
+          <Field label="Empresa" htmlFor="lead-company" hint="Deixe em branco se o cliente for pessoa física.">
             <input
-              type="checkbox"
-              checked={form.marketing_opt_out}
-              onChange={(event) => update('marketing_opt_out', event.target.checked)}
-              className="mt-0.5 h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-600 dark:border-slate-600 dark:bg-slate-900"
+              id="lead-company"
+              type="text"
+              autoComplete="off"
+              maxLength={120}
+              list="lead-company-options"
+              placeholder="Ex.: Empresa / Organização"
+              value={form.company}
+              onChange={(event) => update('company', event.target.value)}
+              className={inputClassName(false)}
             />
-            <span>
-              Cliente solicitou não receber comunicações/mailing{' '}
-              <span className="text-xs font-medium text-slate-400 dark:text-slate-500">(Opt-out LGPD)</span>
-            </span>
-          </label>
+            <datalist id="lead-company-options">
+              {companies.map((company) => (
+                <option key={company} value={company} />
+              ))}
+            </datalist>
+          </Field>
+
+          {/* Só no cadastro: avisa cliente recorrente e opt-out da LGPD do contato (não bloqueia) */}
+          {mode === 'create' && (
+            <RecurringClientNotice checking={recurring.checking} match={recurring.match} suppressed={recurring.suppressed} />
+          )}
+
+          <div>
+            <label
+              className={cn(
+                'flex w-fit items-start gap-2.5 text-sm text-slate-600 dark:text-slate-300',
+                optOutForced ? 'cursor-not-allowed' : 'cursor-pointer',
+              )}
+            >
+              <input
+                type="checkbox"
+                checked={form.marketing_opt_out || optOutForced}
+                disabled={optOutForced}
+                onChange={(event) => update('marketing_opt_out', event.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-600 disabled:opacity-60 dark:border-slate-600 dark:bg-slate-900"
+              />
+              <span>
+                Cliente solicitou não receber comunicações/mailing{' '}
+                <span className="text-xs font-medium text-slate-400 dark:text-slate-500">(Opt-out LGPD)</span>
+              </span>
+            </label>
+            {optOutHint && <p className="mt-1 pl-[1.625rem] text-xs text-slate-500 dark:text-slate-400">{optOutHint}</p>}
+            {optOutRevoking && (
+              <p role="alert" className="mt-1.5 pl-[1.625rem] text-xs font-medium text-amber-700 dark:text-amber-400">
+                Ao salvar, o opt-out deixa de valer para todos os leads com o mesmo e-mail ou telefone deste lead. Faça isso
+                apenas se o cliente deu novo consentimento.
+              </p>
+            )}
+          </div>
         </Section>
 
         {/* 2. Origem e espaço */}
@@ -782,31 +873,87 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
             Cliente ainda sem data definida
           </label>
 
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            {form.no_date ? (
+          {form.no_date ? (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <Field label="Previsão / Mês de interesse" htmlFor="lead-date_notes">
                 <input
                   id="lead-date_notes"
                   type="text"
                   maxLength={80}
-                  placeholder="Ex.: Novembro/2026"
+                  placeholder="Ex.: Mês/Ano previsto"
                   value={form.date_notes}
                   onChange={(event) => update('date_notes', event.target.value)}
                   className={inputClassName(false)}
                 />
               </Field>
-            ) : (
-              <Field label="Data de interesse" htmlFor="lead-event_date">
-                <input
-                  id="lead-event_date"
-                  type="date"
-                  value={form.event_date}
-                  onChange={(event) => update('event_date', event.target.value)}
-                  className={inputClassName(false)}
-                />
-              </Field>
-            )}
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div role="radiogroup" aria-label="Duração do evento" className="inline-flex rounded-lg bg-slate-100 p-0.5 dark:bg-slate-800">
+                {[
+                  { value: false, label: 'Um dia' },
+                  { value: true, label: 'Mais de um dia' },
+                ].map((option) => {
+                  const selected = form.multi_day === option.value
+                  return (
+                    <button
+                      key={option.label}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      onClick={() => update('multi_day', option.value)}
+                      className={cn(
+                        'rounded-md px-3 py-1 text-sm font-semibold transition-colors',
+                        selected
+                          ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-600 dark:text-white'
+                          : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200',
+                      )}
+                    >
+                      {option.label}
+                    </button>
+                  )
+                })}
+              </div>
 
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <Field
+                  label={form.multi_day ? 'Data inicial' : 'Data de interesse'}
+                  htmlFor="lead-event_date"
+                  error={errors.event_date}
+                >
+                  <input
+                    id="lead-event_date"
+                    type="date"
+                    value={form.event_date}
+                    max={form.multi_day && form.event_end_date ? form.event_end_date : undefined}
+                    onChange={(event) => update('event_date', event.target.value)}
+                    aria-invalid={Boolean(errors.event_date)}
+                    className={inputClassName(Boolean(errors.event_date))}
+                  />
+                </Field>
+                {form.multi_day && (
+                  <Field
+                    label="Data final"
+                    htmlFor="lead-event_end_date"
+                    error={errors.event_end_date}
+                    hint={eventDays && eventDays > 1 ? `${eventDays} dias de evento` : undefined}
+                  >
+                    <input
+                      id="lead-event_end_date"
+                      type="date"
+                      value={form.event_end_date}
+                      min={form.event_date || undefined}
+                      onChange={(event) => update('event_end_date', event.target.value)}
+                      aria-invalid={Boolean(errors.event_end_date)}
+                      className={inputClassName(Boolean(errors.event_end_date))}
+                    />
+                  </Field>
+                )}
+              </div>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field label="Valor de Locação / Espaço (R$)" htmlFor="lead-value_cents">
               <MoneyInput id="lead-value_cents" cents={form.value_cents} onChange={(cents) => update('value_cents', cents)} />
             </Field>
@@ -857,7 +1004,7 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
                 <Calculator className="h-5 w-5" aria-hidden="true" />
               </span>
               <div className="leading-tight">
-                <p className="text-xs font-semibold uppercase tracking-wide text-brand-800 dark:text-brand-200">Valor Global da Proposta</p>
+                <p className="text-xs font-semibold uppercase tracking-wide text-brand-800 dark:text-brand-200">Receita Total da Proposta</p>
                 <p className="text-xs text-brand-700/80 dark:text-brand-300/80">
                   Locação {formatCentsBRL(form.value_cents ?? 0)}
                   {form.has_ab && ` + A&B ${formatCentsBRL(form.ab_cents ?? 0)}`}
@@ -890,7 +1037,7 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
                   id="lead-proposal_number"
                   type="text"
                   autoComplete="off"
-                  placeholder="Ex.: 2026-0142"
+                  placeholder="Ex.: Número da proposta"
                   value={form.proposal_number}
                   onChange={(event) => update('proposal_number', event.target.value)}
                   aria-invalid={Boolean(errors.proposal_number)}
@@ -964,7 +1111,7 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
                   <textarea
                     id="lead-loss_reason_details"
                     rows={3}
-                    placeholder="Conte rapidamente o que aconteceu..."
+                    placeholder="Descreva o motivo da perda"
                     value={form.loss_reason_details}
                     onChange={(event) => update('loss_reason_details', event.target.value)}
                     aria-invalid={Boolean(errors.loss_reason_details)}
@@ -998,7 +1145,7 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
           </div>
         )}
         <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
-          {mode === 'edit' ? (
+          {mode === 'edit' && isAdmin ? (
             <button
               type="button"
               onClick={() => void handleDelete()}
