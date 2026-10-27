@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
-import { CalendarHeart, CircleAlert, CircleCheck, Eye, EyeOff, LoaderCircle, Lock, ShieldAlert, User } from 'lucide-react'
+import { CircleAlert, CircleCheck, Eye, EyeOff, LoaderCircle, Lock, ShieldAlert, User } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
+import AppLogo from '../components/AppLogo'
 import ThemeToggle from '../components/ThemeToggle'
 import Turnstile, { type TurnstileHandle } from '../components/Turnstile'
 import { TURNSTILE_SITE_KEY } from '../lib/turnstile'
@@ -191,15 +192,7 @@ export default function Login() {
         <div className="pointer-events-none absolute -right-24 -top-24 h-96 w-96 rounded-full bg-white/10 blur-3xl" />
         <div className="pointer-events-none absolute -bottom-32 -left-16 h-96 w-96 rounded-full bg-brand-400/20 blur-3xl" />
 
-        <div className="relative flex items-center gap-3 text-white">
-          <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-white/15 ring-1 ring-white/20">
-            <CalendarHeart className="h-6 w-6" aria-hidden="true" />
-          </span>
-          <div className="leading-tight">
-            <p className="text-lg font-bold">Gestão de Leads</p>
-            <p className="text-sm text-brand-100">Eventos &amp; Orçamentos</p>
-          </div>
-        </div>
+        <AppLogo size="lg" variant="onDark" className="relative" />
 
         <div className="relative max-w-lg text-white">
           <h1 className="text-4xl font-bold leading-tight">Cada evento começa com um bom atendimento.</h1>
@@ -218,15 +211,7 @@ export default function Login() {
         </div>
 
         <div className="w-full max-w-md">
-          <div className="mb-8 flex items-center gap-3 lg:hidden">
-            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-brand-900 to-brand-600 text-white">
-              <CalendarHeart className="h-5 w-5" aria-hidden="true" />
-            </span>
-            <div className="leading-tight">
-              <p className="text-base font-bold text-slate-900 dark:text-white">Gestão de Leads</p>
-              <p className="text-xs text-slate-500 dark:text-slate-400">Eventos &amp; Orçamentos</p>
-            </div>
-          </div>
+          <AppLogo size="md" className="mb-8 lg:hidden" />
 
           <div className="rounded-2xl border border-slate-200 bg-white p-8 shadow-sm dark:border-slate-800 dark:bg-slate-900">
             <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Entrar</h2>

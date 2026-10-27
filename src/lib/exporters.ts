@@ -93,6 +93,7 @@ export function exportLeadsToXlsx(leads: Lead[]): void {
     'Criado em',
     'Contato',
     'Empresa',
+    'CNPJ',
     'Telefone',
     'E-mail',
     'Meio de prospecção',
@@ -113,8 +114,8 @@ export function exportLeadsToXlsx(leads: Lead[]): void {
     'Observações',
   ]
   const dateColumn = 0
-  // Colunas numéricas de valor (K, L, M, N)
-  const valueColumns = [10, 11, 12, 13]
+  // Colunas numéricas de valor (L, M, N, O)
+  const valueColumns = [11, 12, 13, 14]
 
   const rows: Array<Array<string | number | null>> = leads.map((lead) => {
     const values = getLeadValues(lead)
@@ -122,6 +123,7 @@ export function exportLeadsToXlsx(leads: Lead[]): void {
       toExcelDateSerial(lead.created_at),
       lead.contact_name,
       lead.company ?? '',
+      lead.cnpj ?? '',
       lead.contact_phone ?? '',
       lead.contact_email ?? '',
       lead.origin ?? '',
@@ -488,7 +490,7 @@ export function exportLeadsToPdf(leads: Lead[], filterLabels: string[]): void {
       const values = getLeadValues(lead)
       return [
         formatDateBR(toLocalISODate(new Date(lead.created_at))),
-        [lead.contact_name, lead.company].filter(Boolean).join('\n'),
+        [lead.contact_name, lead.company, lead.cnpj ? `CNPJ ${lead.cnpj}` : null].filter(Boolean).join('\n'),
         [lead.contact_phone, lead.contact_email].filter(Boolean).join('\n') || '-',
         [formatLeadRooms(lead, ', '), lead.origin].filter(Boolean).join('\n') || '-',
         formatEventDate(lead),

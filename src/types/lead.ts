@@ -162,10 +162,20 @@ export type Lead = {
 
   /** Coluna gerada pelo banco: telefone só com dígitos (usada na busca). Somente leitura. */
   contact_phone_digits: string | null
+
+  /** CNPJ da empresa nesta proposta (00.000.000/0000-00). */
+  cnpj: string | null
+  /** Coluna gerada: CNPJ só com dígitos (usada na busca). Somente leitura. */
+  cnpj_digits: string | null
+
+  /** Cliente (empresa ou pessoa física) dono do histórico. Sem ele, o banco cria um cadastro próprio. */
+  client_id: UUID | null
+  /** Pessoa do cliente que pediu a proposta (localizada ou criada pelo banco). */
+  contact_id: UUID | null
 }
 
 /** Colunas que o banco calcula e que nunca são enviadas em INSERT/UPDATE. */
-type LeadGeneratedFields = 'contact_phone_digits' | 'total_value' | 'room_interest' | 'event_last_date'
+type LeadGeneratedFields = 'contact_phone_digits' | 'total_value' | 'room_interest' | 'event_last_date' | 'cnpj_digits'
 
 /** Campos que o banco preenche sozinho quando omitidos. */
 type LeadDbDefaults =
@@ -197,6 +207,9 @@ type LeadNullableFields =
   | 'loss_reason'
   | 'loss_reason_details'
   | 'observations'
+  | 'client_id'
+  | 'contact_id'
+  | 'cnpj'
 
 /** Payload para criar um lead: só `contact_name` é obrigatório. */
 export type LeadInsert = Omit<Lead, LeadDbDefaults | LeadNullableFields | LeadGeneratedFields> &
@@ -206,7 +219,10 @@ export type LeadInsert = Omit<Lead, LeadDbDefaults | LeadNullableFields | LeadGe
 export type LeadUpdate = Partial<LeadInsert>
 
 /** Estado de um formulário de lead (sem campos controlados pelo banco). */
-export type LeadFormData = Omit<Lead, 'id' | 'created_at' | 'updated_at' | 'user_id' | LeadGeneratedFields>
+export type LeadFormData = Omit<
+  Lead,
+  'id' | 'created_at' | 'updated_at' | 'user_id' | 'client_id' | 'contact_id' | LeadGeneratedFields
+>
 
 /** Valores iniciais de um formulário de novo lead. */
 export const EMPTY_LEAD_FORM: LeadFormData = {
@@ -214,6 +230,7 @@ export const EMPTY_LEAD_FORM: LeadFormData = {
   contact_phone: null,
   contact_email: null,
   company: null,
+  cnpj: null,
   marketing_opt_out: false,
   origin: null,
   room_interests: [],
@@ -297,6 +314,82 @@ export type LeadAttachmentInsert = Omit<LeadAttachment, 'id' | 'created_at' | 'u
 // Perfis de usuário
 // =============================================================================
 
+// =============================================================================
+// Clientes e pessoas de contato
+// =============================================================================
+
+export const CLIENT_TYPES = ['company', 'individual'] as const
+export type ClientType = (typeof CLIENT_TYPES)[number]
+
+/** Linha da tabela `clients`: empresa ou pessoa física, com o histórico de propostas em `leads.client_id`. */
+export type Client = {
+  id: UUID
+  name: string
+  client_type: ClientType
+  /** Domínio de e-mail corporativo (nulo para provedores públicos como gmail e hotmail). */
+  email_domain: string | null
+  notes: string | null
+  /** CNPJ do braço (00.000.000/0000-00). Cada CNPJ é um cadastro único. */
+  cnpj: string | null
+  /** Coluna gerada: CNPJ só com dígitos. Somente leitura. */
+  cnpj_digits: string | null
+  /** Identifica o braço quando a marca tem mais de um CNPJ, ex.: "Matriz", "Filial Novo Hamburgo". */
+  branch_label: string | null
+  created_at: ISODateTime
+  updated_at: ISODateTime
+}
+
+export type ClientInsert = Pick<Client, 'name'> &
+  Partial<Pick<Client, 'client_type' | 'email_domain' | 'notes' | 'cnpj' | 'branch_label'>>
+export type ClientUpdate = Partial<ClientInsert>
+
+/** Linha da tabela `client_contacts`: uma pessoa que já falou em nome do cliente. */
+export type ClientContact = {
+  id: UUID
+  client_id: UUID
+  name: string
+  /** Cargo ou setor, ex.: Marketing, RH. */
+  role: string | null
+  phone: string | null
+  /** Coluna gerada: telefone só com dígitos. Somente leitura. */
+  phone_digits: string | null
+  email: string | null
+  is_primary: boolean
+  active: boolean
+  created_at: ISODateTime
+}
+
+export type ClientContactInsert = Pick<ClientContact, 'client_id' | 'name'> &
+  Partial<Pick<ClientContact, 'role' | 'phone' | 'email' | 'is_primary' | 'active'>>
+export type ClientContactUpdate = Partial<Omit<ClientContactInsert, 'client_id'>>
+
+export const CLIENT_TYPE_LABELS: Record<ClientType, string> = {
+  company: 'Empresa',
+  individual: 'Pessoa Física',
+}
+
+/** Linha da view `client_summaries`: o cliente com o resumo do histórico de propostas. */
+export type ClientSummary = Client & {
+  proposals_count: number
+  closed_count: number
+  open_count: number
+  lost_count: number
+  /** Soma de `total_value` das propostas fechadas. */
+  closed_revenue: number
+  /** Soma de `total_value` das propostas em aberto. */
+  open_revenue: number
+  last_proposal_at: ISODateTime | null
+  contacts_count: number
+  primary_contact_id: UUID | null
+  primary_contact_name: string | null
+  primary_contact_phone: string | null
+  primary_contact_email: string | null
+  /** O contato principal pediu opt-out (LGPD). */
+  primary_contact_opt_out: boolean
+  /** Nome, contatos, e-mails e telefones em minúsculas (usado na busca). */
+  search_text: string
+}
+
 /** Linha da tabela `user_profiles` (um perfil por usuário do Supabase Auth). */
 export type UserProfile = {
   user_id: UUID
@@ -350,6 +443,18 @@ export type Database = {
         Update: LeadUpdate
         Relationships: []
       }
+      clients: {
+        Row: Client
+        Insert: ClientInsert
+        Update: ClientUpdate
+        Relationships: []
+      }
+      client_contacts: {
+        Row: ClientContact
+        Insert: ClientContactInsert
+        Update: ClientContactUpdate
+        Relationships: []
+      }
       lead_attachments: {
         Row: LeadAttachment
         Insert: LeadAttachmentInsert
@@ -366,7 +471,12 @@ export type Database = {
         Relationships: []
       }
     }
-    Views: { [_ in never]: never }
+    Views: {
+      client_summaries: {
+        Row: ClientSummary
+        Relationships: []
+      }
+    }
     Functions: {
       /** O usuário logado tem papel ADMIN? */
       is_admin: { Args: Record<string, never>; Returns: boolean }

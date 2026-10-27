@@ -308,3 +308,103 @@ export function foldIntoOthers(items: RankItem[], maxSlices: number): RankItem[]
   const share = rest.reduce((sum, item) => sum + item.share, 0)
   return [...kept, { label: OTHERS_LABEL, count, share }]
 }
+
+// =============================================================================
+// Receita mês a mês
+// Duas leituras do mesmo valor: pelo mês do evento (receita realizada) e pelo
+// mês em que a proposta foi feita (volume de propostas do mês).
+// =============================================================================
+
+/** "YYYY-MM" */
+export type ISOMonth = string
+
+export const MONTHLY_LEAD_COLUMNS = 'id, created_at, event_date, status, total_value'
+
+export type MonthlyLead = Pick<Lead, 'id' | 'created_at' | 'event_date' | 'status' | 'total_value'>
+
+export type MonthlyStatusPoint = {
+  month: ISOMonth
+  /** "out/26" */
+  label: string
+  /** "outubro de 2026" */
+  fullLabel: string
+  fechado: number
+  em_aberto: number
+  perdido: number
+  total: number
+}
+
+export function currentMonth(today = new Date()): ISOMonth {
+  return toLocalISODate(today).slice(0, 7)
+}
+
+export function addMonths(month: ISOMonth, delta: number): ISOMonth {
+  const [year, monthIndex] = month.split('-').map(Number)
+  const date = new Date(year, monthIndex - 1 + delta, 1)
+  return toLocalISODate(date).slice(0, 7)
+}
+
+/** Meses exibidos nos gráficos: alguns antes e alguns depois do mês de referência (eventos futuros). */
+export function monthWindow(reference: ISOMonth, before = 8, after = 3): ISOMonth[] {
+  return Array.from({ length: before + after + 1 }, (_, index) => addMonths(reference, index - before))
+}
+
+/** Primeiro e último dia do intervalo de meses ("YYYY-MM-DD"). */
+export function monthsToRange(months: ISOMonth[]): DateRange {
+  const last = months[months.length - 1]
+  const lastDay = parseLocalISODate(`${addMonths(last, 1)}-01`)
+  lastDay.setDate(lastDay.getDate() - 1)
+  return { from: `${months[0]}-01`, to: toLocalISODate(lastDay) }
+}
+
+const monthNameFormatter = new Intl.DateTimeFormat('pt-BR', { month: 'short' })
+const monthLongFormatter = new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric' })
+
+/** "2026-10" -> "outubro de 2026" */
+export function formatMonthLong(month: ISOMonth): string {
+  return monthLongFormatter.format(parseLocalISODate(`${month}-01`))
+}
+
+/** Mês da proposta pela data de criação, no fuso local. */
+export function proposalMonth(lead: Pick<Lead, 'created_at'>): ISOMonth {
+  return toLocalISODate(new Date(lead.created_at)).slice(0, 7)
+}
+
+/** Mês do evento pelo primeiro dia (texto "YYYY-MM-DD", sem conversão de fuso). */
+export function eventMonth(lead: Pick<Lead, 'event_date'>): ISOMonth | null {
+  return lead.event_date ? lead.event_date.slice(0, 7) : null
+}
+
+/** Soma `total_value` por mês e por situação. */
+export function groupValueByMonth(
+  leads: MonthlyLead[],
+  months: ISOMonth[],
+  getMonth: (lead: MonthlyLead) => ISOMonth | null,
+): MonthlyStatusPoint[] {
+  const points = new Map<ISOMonth, MonthlyStatusPoint>(
+    months.map((month) => {
+      const date = parseLocalISODate(`${month}-01`)
+      return [
+        month,
+        {
+          month,
+          label: `${monthNameFormatter.format(date).replace('.', '')}/${month.slice(2, 4)}`,
+          fullLabel: monthLongFormatter.format(date),
+          fechado: 0,
+          em_aberto: 0,
+          perdido: 0,
+          total: 0,
+        },
+      ]
+    }),
+  )
+  for (const lead of leads) {
+    const month = getMonth(lead)
+    const point = month ? points.get(month) : undefined
+    if (!point) continue
+    const value = Number(lead.total_value ?? 0)
+    point[lead.status] += value
+    point.total += value
+  }
+  return months.map((month) => points.get(month) as MonthlyStatusPoint)
+}

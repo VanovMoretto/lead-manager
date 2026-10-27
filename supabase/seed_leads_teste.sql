@@ -12,7 +12,13 @@
 -- =============================================================================
 begin;
 
+create temporary table seed_test_clients on commit drop as
+  select distinct client_id from public.leads
+  where (contact_email like '%@teste.exemplo.com' or contact_phone = '(11) 96543-2109') and client_id is not null;
 delete from public.leads where (contact_email like '%@teste.exemplo.com' or contact_phone = '(11) 96543-2109');
+delete from public.clients c
+ where c.id in (select client_id from seed_test_clients)
+   and not exists (select 1 from public.leads l where l.client_id = c.id);
 
 with
 rooms as (
@@ -122,6 +128,17 @@ update public.leads set observations = 'Pediu duas opções de cardápio. Retorn
 update public.leads set observations = 'Decisão depende da aprovação da diretoria na próxima reunião.'
  where contact_email = 'aline.ribeiro@teste.exemplo.com';
 
+-- Clientes e contatos (migração 009): agrupa de novo agora que as empresas foram definidas
+update public.leads set client_id = null, contact_id = null
+ where (contact_email like '%@teste.exemplo.com' or contact_phone = '(11) 96543-2109');
+delete from public.clients c
+ where not exists (select 1 from public.leads l where l.client_id = c.id)
+   and exists (
+     select 1 from public.client_contacts ct
+     where ct.client_id = c.id and (ct.email like '%@teste.exemplo.com' or ct.phone = '(11) 96543-2109')
+   );
+select public.backfill_lead_clients();
+
 commit;
 
 -- Conferência
@@ -130,5 +147,8 @@ from public.leads
 where (contact_email like '%@teste.exemplo.com' or contact_phone = '(11) 96543-2109')
 order by created_at;
 
--- Para apagar os leads de teste depois:
+-- Para apagar os leads de teste depois (e os clientes que ficaram sem proposta):
 -- delete from public.leads where (contact_email like '%@teste.exemplo.com' or contact_phone = '(11) 96543-2109');
+-- delete from public.clients c where not exists (select 1 from public.leads l where l.client_id = c.id)
+--   and exists (select 1 from public.client_contacts ct where ct.client_id = c.id
+--               and (ct.email like '%@teste.exemplo.com' or ct.phone = '(11) 96543-2109'));

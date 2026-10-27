@@ -39,3 +39,11 @@ export function buildFollowUpWhatsAppUrl(
   if (!number) return null
   return `https://wa.me/${number}?text=${encodeURIComponent(buildFollowUpMessage(lead))}`
 }
+
+/** Link do WhatsApp com uma saudação simples ao contato, ou null sem telefone válido. */
+export function buildGreetingWhatsAppUrl(name: string, phone: string | null | undefined): string | null {
+  const number = toWhatsAppNumber(phone)
+  if (!number) return null
+  const first = firstName(name)
+  return `https://wa.me/${number}?text=${encodeURIComponent(first ? `Olá ${first}, tudo bem?` : 'Olá, tudo bem?')}`
+}

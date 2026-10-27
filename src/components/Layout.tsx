@@ -1,29 +1,33 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
-  CalendarHeart,
+  Building2,
   ChevronRight,
   CircleCheck,
+  FileText,
   LayoutDashboard,
   LogOut,
   Menu,
   Plus,
-  Search,
   Settings,
   X,
   type LucideIcon,
 } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
+import AppLogo from './AppLogo'
 import { cn } from '../lib/utils'
 import type { Lead } from '../types/lead'
+import type { RecurringClientMatch } from '../hooks/useRecurringClient'
 import LeadFormModal, { type LeadFormMode } from './LeadFormModal'
 import ThemeToggle from './ThemeToggle'
 import UserAvatar from './UserAvatar'
 
 /** Disponível nas páginas via `useOutletContext<LayoutOutletContext>()`. */
 export type LayoutOutletContext = {
-  /** Abre o formulário de cadastro de lead. */
+  /** Abre o formulário de cadastro de proposta. */
   openNewLead: () => void
+  /** Abre o cadastro de proposta já vinculado a um cliente (página do cliente). */
+  openNewLeadForClient: (client: RecurringClientMatch) => void
   /** Abre o mesmo formulário preenchido para edição. */
   openEditLead: (lead: Lead) => void
   /** Muda a cada lead salvo: use como dependência para recarregar listas e indicadores. */
@@ -41,22 +45,13 @@ type NavItem = {
 
 const NAV_ITEMS: NavItem[] = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
-  { to: '/leads', label: 'Consultar Leads', icon: Search },
+  { to: '/propostas', label: 'Consultar Propostas', icon: FileText },
+  { to: '/leads', label: 'Consultar Leads', icon: Building2 },
   { to: '/admin', label: 'Painel Admin', icon: Settings, adminOnly: true },
 ]
 
 function Brand() {
-  return (
-    <div className="flex items-center gap-3">
-      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-brand-900 to-brand-600 text-white shadow-sm">
-        <CalendarHeart className="h-5 w-5" aria-hidden="true" />
-      </span>
-      <div className="leading-tight">
-        <p className="text-base font-bold text-slate-900 dark:text-white">Gestão de Leads</p>
-        <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Eventos &amp; Orçamentos</p>
-      </div>
-    </div>
-  )
+  return <AppLogo size="md" />
 }
 
 type SidebarContentProps = {
@@ -96,7 +91,7 @@ function SidebarContent({ onNewLead, onNavigate }: SidebarContentProps) {
           )}
         >
           <Plus className="h-4 w-4" aria-hidden="true" />
-          Novo Lead
+          Nova Proposta
         </button>
       </div>
 
@@ -173,7 +168,11 @@ function SidebarContent({ onNewLead, onNavigate }: SidebarContentProps) {
 }
 
 export default function Layout() {
-  const [leadForm, setLeadForm] = useState<{ open: boolean; lead: Lead | null }>({ open: false, lead: null })
+  const [leadForm, setLeadForm] = useState<{ open: boolean; lead: Lead | null; client: RecurringClientMatch | null }>({
+    open: false,
+    lead: null,
+    client: null,
+  })
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const [leadsVersion, setLeadsVersion] = useState(0)
   const [toast, setToast] = useState<{ id: number; message: string } | null>(null)
@@ -182,12 +181,17 @@ export default function Layout() {
 
   const openNewLead = useCallback(() => {
     setIsMobileMenuOpen(false)
-    setLeadForm({ open: true, lead: null })
+    setLeadForm({ open: true, lead: null, client: null })
+  }, [])
+
+  const openNewLeadForClient = useCallback((client: RecurringClientMatch) => {
+    setIsMobileMenuOpen(false)
+    setLeadForm({ open: true, lead: null, client })
   }, [])
 
   const openEditLead = useCallback((lead: Lead) => {
     setIsMobileMenuOpen(false)
-    setLeadForm({ open: true, lead })
+    setLeadForm({ open: true, lead, client: null })
   }, [])
 
   const closeLeadForm = useCallback(() => {
@@ -199,16 +203,18 @@ export default function Layout() {
     setLeadsVersion((current) => current + 1)
     setToast({
       id: Date.now(),
-      message: mode === 'create' ? `Lead "${lead.contact_name}" cadastrado.` : `Lead "${lead.contact_name}" atualizado.`,
+      message: mode === 'create' ? `Proposta de "${lead.contact_name}" cadastrada.` : `Proposta de "${lead.contact_name}" atualizada.`,
     })
   }, [])
 
   const handleLeadDeleted = useCallback(
     (lead: Lead) => {
       setLeadsVersion((current) => current + 1)
-      setToast({ id: Date.now(), message: `Lead "${lead.contact_name}" excluído.` })
-      // Estava nos detalhes do lead excluído: volta para a consulta
-      if (location.pathname === `/leads/${lead.id}`) navigate('/leads', { replace: true })
+      setToast({ id: Date.now(), message: `Proposta de "${lead.contact_name}" excluída.` })
+      // Estava nos detalhes da proposta excluída: volta para a página do cliente ou para a consulta
+      if (location.pathname === `/propostas/${lead.id}`) {
+        navigate(lead.client_id ? `/leads/${lead.client_id}` : '/propostas', { replace: true })
+      }
     },
     [location.pathname, navigate],
   )
@@ -230,7 +236,7 @@ export default function Layout() {
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [isMobileMenuOpen])
 
-  const outletContext: LayoutOutletContext = { openNewLead, openEditLead, leadsVersion }
+  const outletContext: LayoutOutletContext = { openNewLead, openNewLeadForClient, openEditLead, leadsVersion }
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950">
@@ -260,7 +266,7 @@ export default function Layout() {
             className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-brand-700"
           >
             <Plus className="h-4 w-4" aria-hidden="true" />
-            <span className="hidden sm:inline">Novo Lead</span>
+            <span className="hidden sm:inline">Nova Proposta</span>
           </button>
         </div>
       </header>
@@ -306,6 +312,7 @@ export default function Layout() {
       <LeadFormModal
         open={leadForm.open}
         lead={leadForm.lead}
+        presetClient={leadForm.client}
         onClose={closeLeadForm}
         onSaved={handleLeadSaved}
         onDeleted={handleLeadDeleted}

@@ -48,3 +48,46 @@ export function useCompanies(reloadKey: unknown = null) {
 
   return { companies: state?.companies ?? [], loading: state?.key !== reloadKey }
 }
+
+/** Empresa sugerida no formulário: um cadastro (braço) de `clients`, ou só o nome vindo das propostas. */
+export type CompanyOption = { id: string | null; name: string; branch_label: string | null; cnpj: string | null }
+
+/** Empresas cadastradas, cada braço separado. Sem a migração 009, cai nos nomes das propostas. */
+async function fetchCompanyOptions(): Promise<CompanyOption[]> {
+  const options: CompanyOption[] = []
+  for (let offset = 0; ; offset += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from('clients')
+      .select('id, name, branch_label, cnpj')
+      .eq('client_type', 'company')
+      .order('name', { ascending: true })
+      .range(offset, offset + PAGE_SIZE - 1)
+    if (error) {
+      const names = await fetchCompanies()
+      return names.map((name) => ({ id: null, name, branch_label: null, cnpj: null }))
+    }
+    options.push(...(data ?? []))
+    if (!data || data.length < PAGE_SIZE) break
+  }
+  return options
+}
+
+export function useCompanyOptions(reloadKey: unknown = null) {
+  const [state, setState] = useState<{ key: unknown; options: CompanyOption[] } | null>(null)
+
+  useEffect(() => {
+    let isActive = true
+    fetchCompanyOptions()
+      .then((options) => {
+        if (isActive) setState({ key: reloadKey, options })
+      })
+      .catch(() => {
+        if (isActive) setState({ key: reloadKey, options: [] })
+      })
+    return () => {
+      isActive = false
+    }
+  }, [reloadKey])
+
+  return { options: state?.options ?? [] }
+}

@@ -59,7 +59,12 @@ function LeadsSample({ leads }: { leads: Lead[] }) {
           <tr key={lead.id}>
             <td className={bodyCell}>
               <p className="font-medium text-slate-900 dark:text-white">{lead.contact_name}</p>
-              {lead.company && <p className="text-xs text-slate-500 dark:text-slate-400">{lead.company}</p>}
+              {lead.company && (
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  {lead.company}
+                  {lead.cnpj && ` · CNPJ ${lead.cnpj}`}
+                </p>
+              )}
             </td>
             <td className={cn(bodyCell, 'whitespace-nowrap')}>{formatLeadEventPeriod(lead) ?? lead.date_notes ?? 'Sem data'}</td>
             <td className={cn(bodyCell, 'whitespace-nowrap text-right tabular-nums')}>

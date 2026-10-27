@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import {
+  BadgeCheck,
   BedDouble,
   Check,
   Calculator,
@@ -24,8 +25,10 @@ import type { PostgrestError } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
 import { cn } from '../lib/utils'
 import {
+  formatCNPJ,
   formatCentsBRL,
   formatPhoneBR,
+  isValidCNPJ,
   isValidEmail,
   isValidPhoneBR,
   onlyDigits,
@@ -36,13 +39,21 @@ import { useSettingsOptions } from '../hooks/useSettingsOptions'
 import { countEventDays, getLeadRooms } from '../lib/leadFields'
 import RecurringClientNotice from './RecurringClientNotice'
 import { useAuth } from '../contexts/AuthContext'
-import { useRecurringClient } from '../hooks/useRecurringClient'
-import { useCompanies } from '../hooks/useCompanies'
+import {
+  useRecurringClient,
+  type ClientBranch,
+  type ClientLinkChoice,
+  type RecurringClientMatch,
+} from '../hooks/useRecurringClient'
+import { isSameContactName } from '../lib/clientIdentity'
+import { useCompanyOptions, type CompanyOption } from '../hooks/useCompanies'
+import CompanyAutocomplete from './CompanyAutocomplete'
 import { fetchLeadAttachmentPaths, removeAttachmentFiles } from '../lib/leadAttachments'
 import { RateLimitError, guardMutation } from '../lib/rateLimit'
 import {
   DEFAULT_LOSS_REASONS,
   LOSS_REASON_OTHER,
+  type ClientContact,
   type Lead,
   type LeadInsert,
   type LeadStatus,
@@ -63,6 +74,8 @@ type LeadFormModalProps = {
   onSaved?: (lead: Lead, mode: LeadFormMode) => void
   /** Chamado após excluir o lead (só no modo edição). */
   onDeleted?: (lead: Lead) => void
+  /** Proposta nova já vinculada a este cliente (aberta pela página do cliente). */
+  presetClient?: RecurringClientMatch | null
 }
 
 // =============================================================================
@@ -75,6 +88,7 @@ type FormState = {
   contact_email: string
   /** Empresa do contato (vazio = pessoa física). */
   company: string
+  cnpj: string
   /** Cliente pediu para não receber comunicações/mailing (LGPD). */
   marketing_opt_out: boolean
   origin: string
@@ -106,12 +120,16 @@ type FormState = {
 type FieldName = keyof FormState
 type FormErrors = Partial<Record<FieldName, string>>
 
-function buildInitialState(lead?: Lead | null): FormState {
+function buildInitialState(lead?: Lead | null, presetClient?: RecurringClientMatch | null): FormState {
+  // Proposta para um cliente já cadastrado: começa com a empresa e o contato principal
+  const presetContact = !lead ? presetClient?.contacts.find((contact) => contact.active) : undefined
+  const presetCompany = !lead && presetClient?.client.client_type === 'company' ? presetClient.client.name : ''
   return {
-    contact_name: lead?.contact_name ?? '',
-    contact_phone: lead?.contact_phone ? formatPhoneBR(lead.contact_phone) : '',
-    contact_email: lead?.contact_email ?? '',
-    company: lead?.company ?? '',
+    contact_name: lead?.contact_name ?? presetContact?.name ?? '',
+    contact_phone: lead?.contact_phone ? formatPhoneBR(lead.contact_phone) : presetContact?.phone ? formatPhoneBR(presetContact.phone) : '',
+    contact_email: lead?.contact_email ?? presetContact?.email ?? '',
+    company: lead?.company ?? presetCompany,
+    cnpj: lead?.cnpj ? formatCNPJ(lead.cnpj) : !lead && presetClient?.client.cnpj ? formatCNPJ(presetClient.client.cnpj) : '',
     marketing_opt_out: lead?.marketing_opt_out ?? false,
     origin: lead?.origin ?? '',
     room_interests: lead ? [...getLeadRooms(lead)] : [],
@@ -152,6 +170,9 @@ function validate(state: FormState): FormErrors {
   if (onlyDigits(state.contact_phone).length > 0 && !isValidPhoneBR(state.contact_phone)) {
     errors.contact_phone = 'Telefone incompleto. Use DDD + número.'
   }
+  if (onlyDigits(state.cnpj).length > 0 && !isValidCNPJ(state.cnpj)) {
+    errors.cnpj = 'CNPJ inválido. Confira os 14 dígitos.'
+  }
   if (state.contact_email.trim() && !isValidEmail(state.contact_email)) {
     errors.contact_email = 'E-mail inválido.'
   }
@@ -188,6 +209,7 @@ function buildPayload(state: FormState, forceOptOut = false): LeadInsert {
     contact_phone: phoneDigits.length > 0 ? formatPhoneBR(phoneDigits) : null,
     contact_email: state.contact_email.trim() ? state.contact_email.trim().toLowerCase() : null,
     company: state.company.trim().replace(/\s+/g, ' ') || null,
+    cnpj: isValidCNPJ(state.cnpj) ? formatCNPJ(state.cnpj) : null,
     marketing_opt_out: state.marketing_opt_out || forceOptOut,
     origin: state.origin || null,
     room_interests: state.room_interests,
@@ -217,7 +239,7 @@ function buildPayload(state: FormState, forceOptOut = false): LeadInsert {
 /** Traduz erros do Postgres/PostgREST para mensagens úteis. */
 function translateDbError(error: PostgrestError): { message: string; field?: FieldName } {
   if (error.code === '23505' && error.message.includes('proposal_number')) {
-    return { message: 'Já existe um lead com este número de proposta.', field: 'proposal_number' }
+    return { message: 'Já existe uma proposta com este número.', field: 'proposal_number' }
   }
   if (error.code === '23514') {
     if (error.message.includes('leads_loss_reason_required')) {
@@ -225,6 +247,9 @@ function translateDbError(error: PostgrestError): { message: string; field?: Fie
     }
     if (error.message.includes('leads_contact_name_not_blank')) {
       return { message: 'Informe o nome do contato.', field: 'contact_name' }
+    }
+    if (error.message.includes('leads_cnpj_digits_length')) {
+      return { message: 'CNPJ inválido. Confira os 14 dígitos.', field: 'cnpj' }
     }
     if (error.message.includes('leads_text_lengths')) {
       return { message: 'Algum campo passou do tamanho máximo permitido. Encurte o texto e tente de novo.' }
@@ -247,12 +272,12 @@ function translateDbError(error: PostgrestError): { message: string; field?: Fie
     return { message: 'O banco de dados está desatualizado. Rode a migração 002 no SQL Editor do Supabase.' }
   }
   if (error.code === 'PGRST116') {
-    return { message: 'Este lead não foi encontrado. Ele pode ter sido excluído por outra pessoa.' }
+    return { message: 'Esta proposta não foi encontrada. Ela pode ter sido excluída por outra pessoa.' }
   }
   if (error.message.toLowerCase().includes('failed to fetch')) {
     return { message: 'Sem conexão com o servidor. Verifique sua internet e tente novamente.' }
   }
-  return { message: 'Não foi possível salvar o lead. Tente novamente.' }
+  return { message: 'Não foi possível salvar a proposta. Tente novamente.' }
 }
 
 /** Receita total da proposta em centavos: locação + A&B + hospedagem (só o que estiver marcado). */
@@ -366,10 +391,55 @@ type YesNoToggleProps = {
   value: boolean
   onChange: (value: boolean) => void
   disabled?: boolean
+  /** Rótulo em cima e botões embaixo, na altura de um campo (alinha com um campo ao lado). */
+  stacked?: boolean
 }
 
 /** Botões Sim/Não lado a lado: um clique e pronto. */
-function YesNoToggle({ id, label, icon: Icon, value, onChange, disabled }: YesNoToggleProps) {
+function YesNoToggle({ id, label, icon: Icon, value, onChange, disabled, stacked = false }: YesNoToggleProps) {
+  if (stacked) {
+    return (
+      <div>
+        <p id={`${id}-label`} className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-slate-700 dark:text-slate-200">
+          {Icon && <Icon className="h-4 w-4 text-slate-400" aria-hidden="true" />}
+          {label}
+        </p>
+        <div
+          role="radiogroup"
+          aria-labelledby={`${id}-label`}
+          className="grid h-[42px] grid-cols-2 gap-1 rounded-lg border border-slate-200 bg-slate-100 p-1 dark:border-slate-700 dark:bg-slate-800"
+        >
+          {[
+            { optionValue: true, text: 'Sim' },
+            { optionValue: false, text: 'Não' },
+          ].map(({ optionValue, text }) => {
+            const selected = value === optionValue
+            return (
+              <button
+                key={text}
+                type="button"
+                role="radio"
+                aria-checked={selected}
+                disabled={disabled}
+                onClick={() => onChange(optionValue)}
+                className={cn(
+                  'rounded-md text-sm font-semibold transition-colors disabled:cursor-not-allowed',
+                  selected
+                    ? optionValue
+                      ? 'bg-brand-600 text-white shadow-sm'
+                      : 'bg-white text-slate-900 shadow-sm dark:bg-slate-600 dark:text-white'
+                    : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200',
+                )}
+              >
+                {text}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-950">
       <span id={`${id}-label`} className="flex min-w-0 items-center gap-2 text-sm font-medium leading-tight text-slate-700 dark:text-slate-200">
@@ -461,13 +531,14 @@ type LeadFormProps = {
   onRequestReset: () => void
   /** Informa ao modal se há alterações não salvas e se está salvando. */
   onStateChange: (state: { dirty: boolean; submitting: boolean }) => void
+  presetClient: RecurringClientMatch | null
 }
 
-function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateChange }: LeadFormProps) {
+function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateChange, presetClient }: LeadFormProps) {
   const mode: LeadFormMode = lead ? 'edit' : 'create'
   // Excluir lead é exclusivo do ADMIN (o banco também recusa a exclusão de quem não é)
   const { isAdmin } = useAuth()
-  const initialState = useMemo(() => buildInitialState(lead), [lead])
+  const initialState = useMemo(() => buildInitialState(lead, presetClient), [lead, presetClient])
 
   const [form, setForm] = useState<FormState>(initialState)
   const [errors, setErrors] = useState<FormErrors>({})
@@ -529,22 +600,153 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
   const eventDays = form.multi_day
     ? countEventDays({ event_date: form.event_date || null, event_end_date: form.event_end_date || null })
     : null
-  // Empresas já cadastradas, sugeridas no campo Empresa
-  const { companies } = useCompanies()
+  // Empresas já cadastradas (cada braço com o CNPJ), sugeridas no campo Empresa
+  const { options: companyOptions } = useCompanyOptions()
 
-  // Opt-out por contato (LGPD): no cadastro, consulta leads anteriores e a lista de supressão
+  /** Braço da empresa escolhido no cartão (marca com mais de um CNPJ). */
+  const [preferredClientId, setPreferredClientId] = useState<string | undefined>(undefined)
+  /** "+ Outro CNPJ / Novo braço": a proposta vira um cadastro novo da mesma marca. */
+  const [newBranch, setNewBranch] = useState(false)
+
+  // No cadastro: reconhece cliente já cadastrado (CNPJ, telefone, e-mail, empresa ou domínio) e opt-out da LGPD
   const recurring = useRecurringClient({
+    cnpj: form.cnpj,
+    preferredClientId,
     phone: form.contact_phone,
     email: form.contact_email,
+    company: form.company,
     enabled: mode === 'create',
   })
+  // Aberto pela página do cliente: o vínculo já está decidido
+  const lockedClient = mode === 'create' ? presetClient : null
+  const clientMatch = mode === 'create' ? (lockedClient ?? recurring.match) : null
+  const [clientChoice, setClientChoice] = useState<ClientLinkChoice | null>(null)
+  /** Sem escolha do vendedor para este cliente: "Sim" com o contato reconhecido (ou de mesmo nome). */
+  const linkChoice: ClientLinkChoice | null = clientMatch
+    ? newBranch && !lockedClient
+      ? { clientId: clientMatch.client.id, link: false, contactId: null }
+      : clientChoice?.clientId === clientMatch.client.id
+      ? clientChoice
+      : {
+          clientId: clientMatch.client.id,
+          link: true,
+          contactId:
+            clientMatch.matchedContactId ??
+            clientMatch.contacts.find((contact) => isSameContactName(contact.name, form.contact_name))?.id ??
+            null,
+        }
+    : null
+
+  /** "Sim": a proposta usa o nome e o CNPJ do cadastro (o vendedor vê o vínculo no formulário). */
+  const handleLinkChange = (link: boolean) => {
+    setNewBranch(false)
+    if (linkChoice) setClientChoice({ ...linkChoice, link })
+    if (link && clientMatch) {
+      const { client } = clientMatch
+      setForm((current) => ({
+        ...current,
+        company: client.client_type === 'company' ? client.name : current.company,
+        cnpj: !onlyDigits(current.cnpj) && client.cnpj ? formatCNPJ(client.cnpj) : current.cnpj,
+      }))
+      setErrors((current) => ({ ...current, cnpj: undefined }))
+    } else if (!link && clientMatch?.client.cnpj) {
+      // O CNPJ do cadastro levaria a proposta de volta a ele: cadastro separado fica sem esse CNPJ
+      const clientCnpj = onlyDigits(clientMatch.client.cnpj)
+      setForm((current) => (onlyDigits(current.cnpj) === clientCnpj ? { ...current, cnpj: '' } : current))
+    }
+  }
+
+  /** Empresa escolhida na lista de sugestões: já aponta o braço certo (e o CNPJ dele). */
+  const handleSelectCompany = (option: CompanyOption) => {
+    setNewBranch(false)
+    setPreferredClientId(option.id ?? undefined)
+    if (option.id) setClientChoice({ clientId: option.id, link: true, contactId: null })
+    setForm((current) => ({
+      ...current,
+      company: option.name,
+      cnpj: option.cnpj ? formatCNPJ(option.cnpj) : onlyDigits(current.cnpj) ? current.cnpj : '',
+    }))
+    setErrors((current) => ({ ...current, cnpj: undefined }))
+    if (submitError) setSubmitError(null)
+  }
+
+  /** Braço existente: entra no histórico dele e o CNPJ vem do cadastro. */
+  const handleSelectBranch = (branch: ClientBranch) => {
+    setNewBranch(false)
+    setPreferredClientId(branch.id)
+    setClientChoice({ clientId: branch.id, link: true, contactId: null })
+    setForm((current) => ({ ...current, cnpj: branch.cnpj ? formatCNPJ(branch.cnpj) : '' }))
+    setErrors((current) => ({ ...current, cnpj: undefined }))
+  }
+
+  /** Novo braço: tira o CNPJ de um braço existente e pede o CNPJ da filial. */
+  const handleNewBranch = () => {
+    setNewBranch(true)
+    setPreferredClientId(undefined)
+    const branchCnpjs = (clientMatch?.branches ?? []).map((branch) => onlyDigits(branch.cnpj ?? ''))
+    if (branchCnpjs.includes(onlyDigits(form.cnpj))) setForm((current) => ({ ...current, cnpj: '' }))
+    document.getElementById('lead-cnpj')?.focus()
+  }
+
+  // CNPJ digitado: preenche a Empresa vazia com o nome do cadastro ou da Receita Federal.
+  // Espera a consulta do CNPJ atual terminar (durante a consulta o cartão ainda mostra o cliente anterior)
+  const cnpjSuggestion =
+    mode === 'create' && !recurring.checking && isValidCNPJ(form.cnpj)
+      ? clientMatch?.reasons.includes('cnpj')
+        ? { name: clientMatch.client.name, city: null, source: 'cadastro' as const }
+        : recurring.cnpjLookup
+          ? { ...recurring.cnpjLookup, source: 'receita' as const }
+          : null
+      : null
+  const suggestionKey = cnpjSuggestion ? `${onlyDigits(form.cnpj)}|${cnpjSuggestion.source}|${cnpjSuggestion.name}` : ''
+  const [appliedSuggestion, setAppliedSuggestion] = useState('')
+  const [companyAutofill, setCompanyAutofill] = useState<NonNullable<typeof cnpjSuggestion> | null>(null)
+  if (suggestionKey && suggestionKey !== appliedSuggestion) {
+    setAppliedSuggestion(suggestionKey)
+    if (cnpjSuggestion && !form.company.trim()) {
+      setForm((current) => ({ ...current, company: cnpjSuggestion.name }))
+      setCompanyAutofill(cnpjSuggestion)
+    }
+  }
+  const showAutofillNote = companyAutofill !== null && form.company === companyAutofill.name
+  const cnpjDigitsTyped = onlyDigits(form.cnpj).length
+  const cnpjLiveError = cnpjDigitsTyped === 14 && !isValidCNPJ(form.cnpj) ? 'CNPJ inválido. Confira os dígitos.' : null
+
+  /**
+   * Contato existente preenche nome, telefone e e-mail. "Novo contato" limpa os dados do
+   * contato que estava escolhido (o que foi digitado à mão continua).
+   */
+  const handleSelectContact = (contact: ClientContact | null) => {
+    if (!linkChoice || !clientMatch) return
+    const previous = clientMatch.contacts.find((item) => item.id === linkChoice.contactId)
+    setClientChoice({ ...linkChoice, link: true, contactId: contact?.id ?? null })
+    if (contact) {
+      setForm((current) => ({
+        ...current,
+        contact_name: contact.name,
+        contact_phone: contact.phone ? formatPhoneBR(contact.phone) : current.contact_phone,
+        contact_email: contact.email ?? current.contact_email,
+      }))
+    } else if (previous) {
+      setForm((current) => ({
+        ...current,
+        contact_name: isSameContactName(current.contact_name, previous.name) ? '' : current.contact_name,
+        contact_phone:
+          previous.phone && onlyDigits(current.contact_phone) === onlyDigits(previous.phone) ? '' : current.contact_phone,
+        contact_email:
+          previous.email && current.contact_email.trim().toLowerCase() === previous.email.toLowerCase() ? '' : current.contact_email,
+      }))
+      document.getElementById('lead-contact_name')?.focus()
+    }
+    setErrors((current) => ({ ...current, contact_name: undefined, contact_phone: undefined, contact_email: undefined }))
+  }
   /** Contato já suprimido: o lead novo nasce com opt-out (o banco também garante isso). */
   const optOutForced = mode === 'create' && recurring.suppressed
   const optOutRevoking = mode === 'edit' && initialState.marketing_opt_out && !form.marketing_opt_out
   const optOutHint = optOutForced
     ? 'Marcado automaticamente: o contato está na lista de opt-out.'
     : form.marketing_opt_out && !initialState.marketing_opt_out
-      ? 'Vale para todos os leads com o mesmo e-mail ou telefone, inclusive os futuros, e continua valendo se este lead for excluído.'
+      ? 'Vale para todas as propostas com o mesmo e-mail ou telefone, inclusive as futuras, e continua valendo se esta proposta for excluída.'
       : null
   const lossReasonLabels = useMemo(() => {
     // Usa os motivos do Painel Admin; se não houver nenhum, cai nos motivos padrão
@@ -603,7 +805,22 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
     setSubmitting(true)
     setSubmitError(null)
 
-    const payload = buildPayload(form, optOutForced)
+    const selectedContact = clientMatch?.contacts.find((contact) => contact.id === linkChoice?.contactId)
+    const payload: LeadInsert = {
+      ...buildPayload(form, optOutForced),
+      // "Sim": vai para o histórico do cliente. Sem client_id o banco cria um cadastro próprio.
+      ...(clientMatch && linkChoice?.link
+        ? {
+            client_id: clientMatch.client.id,
+            // Empresa com o nome do cadastro (relatórios não separam "cremolatto" de "Cremolatto")
+            ...(clientMatch.client.client_type === 'company' ? { company: clientMatch.client.name } : {}),
+            // O contato escolhido só vale se o nome não foi trocado por outra pessoa depois
+            ...(selectedContact && isSameContactName(selectedContact.name, form.contact_name)
+              ? { contact_id: selectedContact.id }
+              : {}),
+          }
+        : {}),
+    }
     let response
     try {
       // Mesmo envio repetido em menos de 1,5 s (duplo clique, Enter segurado) é recusado
@@ -642,7 +859,7 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
   const handleDelete = async () => {
     if (!lead || busy) return
     const confirmed = window.confirm(
-      `Excluir o lead "${lead.contact_name}"?\n\nEssa ação é permanente e remove todos os dados deste orçamento, inclusive os anexos.`,
+      `Excluir a proposta de "${lead.contact_name}"?\n\nEssa ação é permanente e remove todos os dados deste orçamento, inclusive os anexos.`,
     )
     if (!confirmed) return
 
@@ -657,13 +874,13 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
     if (error) {
       setSubmitError(
         error.message.toLowerCase().includes('failed to fetch')
-          ? 'Sem conexão com o servidor. O lead não foi excluído.'
-          : 'Não foi possível excluir o lead. Tente novamente.',
+          ? 'Sem conexão com o servidor. A proposta não foi excluída.'
+          : 'Não foi possível excluir a proposta. Tente novamente.',
       )
       return
     }
     if (!data || data.length === 0) {
-      setSubmitError('Este lead não foi excluído: ele já não existe ou apenas o ADMIN pode excluir leads.')
+      setSubmitError('Esta proposta não foi excluída: ela já não existe ou apenas o ADMIN pode excluir propostas.')
       return
     }
 
@@ -745,28 +962,65 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
             </Field>
           </div>
 
-          <Field label="Empresa" htmlFor="lead-company" hint="Deixe em branco se o cliente for pessoa física.">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-[minmax(0,13rem)_minmax(0,1fr)]">
+          <Field
+            label="CNPJ"
+            htmlFor="lead-cnpj"
+            error={errors.cnpj ?? cnpjLiveError ?? undefined}
+            hint={
+              linkChoice?.link && clientMatch?.client.cnpj && !onlyDigits(form.cnpj)
+                ? `Será usado o do cadastro: ${clientMatch.client.cnpj}`
+                : 'Opcional em sondagens.'
+            }
+          >
             <input
-              id="lead-company"
+              id="lead-cnpj"
               type="text"
+              inputMode="numeric"
               autoComplete="off"
+              placeholder="00.000.000/0000-00"
+              value={form.cnpj}
+              onChange={(event) => update('cnpj', formatCNPJ(event.target.value))}
+              aria-invalid={Boolean(errors.cnpj ?? cnpjLiveError)}
+              aria-describedby={errors.cnpj ?? cnpjLiveError ? 'lead-cnpj-error' : undefined}
+              className={inputClassName(Boolean(errors.cnpj ?? cnpjLiveError))}
+            />
+          </Field>
+          <Field label="Empresa" htmlFor="lead-company" hint={showAutofillNote ? undefined : 'Deixe em branco se o cliente for pessoa física.'}>
+            <CompanyAutocomplete
+              id="lead-company"
               maxLength={120}
-              list="lead-company-options"
               placeholder="Ex.: Empresa / Organização"
               value={form.company}
-              onChange={(event) => update('company', event.target.value)}
+              options={companyOptions}
+              onChange={(value) => update('company', value)}
+              onSelect={handleSelectCompany}
               className={inputClassName(false)}
             />
-            <datalist id="lead-company-options">
-              {companies.map((company) => (
-                <option key={company} value={company} />
-              ))}
-            </datalist>
+            {showAutofillNote && companyAutofill && (
+              <p className="mt-1.5 flex items-center gap-1 text-xs text-emerald-700 dark:text-emerald-400">
+                <BadgeCheck className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                {companyAutofill.source === 'receita'
+                  ? `Dados preenchidos via CNPJ (Receita Federal)${companyAutofill.city ? ` · ${companyAutofill.city}` : ''}`
+                  : 'Preenchido pelo cadastro deste CNPJ'}
+              </p>
+            )}
           </Field>
+          </div>
 
-          {/* Só no cadastro: avisa cliente recorrente e opt-out da LGPD do contato (não bloqueia) */}
+          {/* Só no cadastro: cliente já cadastrado (pergunta se entra no histórico) e opt-out da LGPD (não bloqueia) */}
           {mode === 'create' && (
-            <RecurringClientNotice checking={recurring.checking} match={recurring.match} suppressed={recurring.suppressed} />
+            <RecurringClientNotice
+              checking={recurring.checking}
+              match={clientMatch}
+              suppressed={recurring.suppressed}
+              choice={linkChoice}
+              locked={Boolean(lockedClient)}
+              onLinkChange={handleLinkChange}
+              onSelectContact={handleSelectContact}
+              onSelectBranch={handleSelectBranch}
+              onNewBranch={handleNewBranch}
+            />
           )}
 
           <div>
@@ -1042,6 +1296,7 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
               id="lead-proposal_sent"
               label="Proposta formal enviada?"
               icon={FileText}
+              stacked
               value={form.proposal_sent}
               onChange={(value) => update('proposal_sent', value)}
             />
@@ -1174,7 +1429,7 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
               className="inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-red-600 transition-colors hover:bg-red-50 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-60 dark:text-red-400 dark:hover:bg-red-950/40 dark:hover:text-red-300"
             >
               {deleting ? <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Trash2 className="h-4 w-4" aria-hidden="true" />}
-              {deleting ? 'Excluindo...' : 'Excluir lead'}
+              {deleting ? 'Excluindo...' : 'Excluir proposta'}
             </button>
           ) : (
             <span className="hidden sm:block" aria-hidden="true" />
@@ -1209,7 +1464,7 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
             className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-70"
           >
             {submitting && <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />}
-            {submitting ? 'Salvando...' : mode === 'create' ? 'Cadastrar lead' : 'Salvar alterações'}
+            {submitting ? 'Salvando...' : mode === 'create' ? 'Cadastrar proposta' : 'Salvar alterações'}
           </button>
           </div>
         </div>
@@ -1222,7 +1477,7 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
 // Modal (painel lateral)
 // =============================================================================
 
-export default function LeadFormModal({ open, onClose, lead = null, onSaved, onDeleted }: LeadFormModalProps) {
+export default function LeadFormModal({ open, onClose, lead = null, onSaved, onDeleted, presetClient = null }: LeadFormModalProps) {
   // A cada abertura, gera uma nova chave para remontar o formulário limpo
   const [sessionKey, setSessionKey] = useState(open ? 1 : 0)
   const [wasOpen, setWasOpen] = useState(open)
@@ -1294,10 +1549,14 @@ export default function LeadFormModal({ open, onClose, lead = null, onSaved, onD
             </span>
             <div className="min-w-0">
               <h2 id="lead-form-title" className="text-lg font-semibold text-slate-900 dark:text-white">
-                {isEdit ? 'Editar Lead' : 'Novo Lead'}
+                {isEdit ? 'Editar Proposta' : 'Nova Proposta'}
               </h2>
               <p className="truncate text-sm text-slate-500 dark:text-slate-400">
-                {isEdit ? lead?.contact_name : 'Só o nome é obrigatório. O resto pode ser completado depois.'}
+                {isEdit
+                  ? lead?.contact_name
+                  : presetClient
+                    ? `Para ${presetClient.client.name}`
+                    : 'Só o nome é obrigatório. O resto pode ser completado depois.'}
               </p>
             </div>
           </div>
@@ -1313,8 +1572,9 @@ export default function LeadFormModal({ open, onClose, lead = null, onSaved, onD
 
         {sessionKey > 0 && (
           <LeadForm
-            key={`${sessionKey}-${lead?.id ?? 'new'}`}
+            key={`${sessionKey}-${lead?.id ?? 'new'}-${presetClient?.client.id ?? ''}`}
             lead={lead}
+            presetClient={presetClient}
             onCancel={onClose}
             onSaved={onSaved}
             onDeleted={onDeleted}

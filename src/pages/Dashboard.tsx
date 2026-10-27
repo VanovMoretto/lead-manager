@@ -16,6 +16,8 @@ import {
 import {
   Building2,
   CalendarRange,
+  ChevronLeft,
+  ChevronRight,
   CircleAlert,
   CircleCheck,
   CircleX,
@@ -39,10 +41,19 @@ import { formatBRL, formatDateBR } from '../lib/format'
 import { countEventDays, getLeadRooms, getLeadValues, hasAnyValue, type LeadValueBreakdown } from '../lib/leadFields'
 import {
   DASHBOARD_LEAD_COLUMNS,
+  MONTHLY_LEAD_COLUMNS,
   NOT_INFORMED_LABEL,
   OTHERS_LABEL,
   PERIOD_PRESET_LABELS,
+  addMonths,
   computeKpis,
+  currentMonth,
+  eventMonth,
+  formatMonthLong,
+  groupValueByMonth,
+  monthWindow,
+  monthsToRange,
+  proposalMonth,
   computeTrend,
   countBy,
   countRooms,
@@ -56,6 +67,9 @@ import {
   type DashboardLead,
   type DateRange,
   type Granularity,
+  type ISOMonth,
+  type MonthlyLead,
+  type MonthlyStatusPoint,
   type PeriodPreset,
   type RankItem,
   type TrendPoint,
@@ -159,6 +173,34 @@ async function fetchLeadsInRange(range: DateRange, signal: AbortSignal): Promise
 
     if (error) throw error
     rows.push(...((data ?? []) as DashboardLead[]))
+    if (!data || data.length < PAGE_SIZE) break
+  }
+
+  return rows
+}
+
+type MonthlyKind = 'event' | 'proposal'
+
+/** Propostas com evento nos meses do gráfico (event) ou feitas nesses meses (proposal). */
+async function fetchMonthlyLeads(kind: MonthlyKind, months: ISOMonth[], signal: AbortSignal): Promise<MonthlyLead[]> {
+  const range = monthsToRange(months)
+  const { gte, lt } = rangeToTimestampBounds(range)
+  const rows: MonthlyLead[] = []
+
+  for (let offset = 0; ; offset += PAGE_SIZE) {
+    const base = supabase.from('leads').select(MONTHLY_LEAD_COLUMNS)
+    const filtered =
+      kind === 'event'
+        ? base.gte('event_date', range.from).lte('event_date', range.to)
+        : base.gte('created_at', gte).lt('created_at', lt)
+    const { data, error } = await filtered
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true })
+      .range(offset, offset + PAGE_SIZE - 1)
+      .abortSignal(signal)
+
+    if (error) throw error
+    rows.push(...((data ?? []) as MonthlyLead[]))
     if (!data || data.length < PAGE_SIZE) break
   }
 
@@ -390,11 +432,13 @@ type ChartTooltipProps = {
 
 function ChartTooltip({ active, payload, getTitle, formatValue }: ChartTooltipProps) {
   if (!active || !payload || payload.length === 0) return null
-  const title = getTitle?.(payload[0])
+  const rawTitle = getTitle?.(payload[0])
+  // Só a primeira letra: "Outubro de 2026" (capitalize do CSS deixaria "Outubro De 2026")
+  const title = rawTitle ? rawTitle.charAt(0).toLocaleUpperCase('pt-BR') + rawTitle.slice(1) : rawTitle
 
   return (
     <div className="min-w-44 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm shadow-lg dark:border-slate-700 dark:bg-slate-900">
-      {title && <p className="mb-1.5 font-semibold capitalize text-slate-900 dark:text-white">{title}</p>}
+      {title && <p className="mb-1.5 font-semibold text-slate-900 dark:text-white">{title}</p>}
       <ul className="space-y-1">
         {payload.map((entry, index) => (
           <li key={`${entry.name}-${index}`} className="flex items-center justify-between gap-4">
@@ -409,6 +453,219 @@ function ChartTooltip({ active, payload, getTitle, formatValue }: ChartTooltipPr
         ))}
       </ul>
     </div>
+  )
+}
+
+// -----------------------------------------------------------------------------
+// Receita mês a mês: pelo mês do evento e pelo mês da proposta
+// -----------------------------------------------------------------------------
+
+type MonthlySeries = { key: 'fechado' | 'em_aberto' | 'perdido'; label: string }
+
+function monthlyColor(key: MonthlySeries['key'], theme: ChartTheme): string {
+  return key === 'fechado' ? theme.series[2] : key === 'em_aberto' ? theme.series[3] : theme.loss
+}
+
+function MonthlyRevenueChart({
+  data,
+  series,
+  reference,
+  onSelectMonth,
+  theme,
+}: {
+  data: MonthlyStatusPoint[]
+  series: MonthlySeries[]
+  reference: ISOMonth
+  onSelectMonth: (month: ISOMonth) => void
+  theme: ChartTheme
+}) {
+  const point = data.find((item) => item.month === reference)
+  const axisProps = { tick: { fill: theme.axis, fontSize: 12 }, tickLine: false, axisLine: false } as const
+
+  return (
+    <div>
+      {/* Legenda com os valores do mês de referência (identifica as séries sem depender só da cor) */}
+      <ul className="mb-4 flex flex-wrap gap-x-5 gap-y-2">
+        {series.map((item) => (
+          <li key={item.key} className="flex items-center gap-2 text-sm">
+            <span className="h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: monthlyColor(item.key, theme) }} aria-hidden="true" />
+            <span className="text-slate-600 dark:text-slate-300">{item.label}</span>
+            <span className="font-semibold tabular-nums text-slate-900 dark:text-white">{formatBRL(point?.[item.key] ?? 0)}</span>
+          </li>
+        ))}
+      </ul>
+      <div className="h-64">
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} barCategoryGap="22%">
+            <CartesianGrid vertical={false} stroke={theme.grid} />
+            <XAxis dataKey="label" {...axisProps} interval="preserveStartEnd" minTickGap={6} />
+            <YAxis {...axisProps} width={76} tickFormatter={(value: number) => compactCurrencyFormatter.format(value)} />
+            <Tooltip
+              cursor={{ fill: theme.cursor }}
+              content={
+                <ChartTooltip
+                  getTitle={(entry) => (entry.payload as MonthlyStatusPoint).fullLabel}
+                  formatValue={(entry) => formatBRL(Number(entry.value ?? 0))}
+                />
+              }
+            />
+            {series.map((item, index) => (
+              <Bar
+                key={item.key}
+                dataKey={item.key}
+                name={item.label}
+                stackId="mes"
+                fill={monthlyColor(item.key, theme)}
+                // 2px da cor do fundo separam os segmentos empilhados
+                stroke={theme.surface}
+                strokeWidth={2}
+                radius={index === series.length - 1 ? [4, 4, 0, 0] : [0, 0, 0, 0]}
+                maxBarSize={36}
+                cursor="pointer"
+                onClick={(entry) => onSelectMonth((entry as unknown as MonthlyStatusPoint).month)}
+              >
+                {data.map((entry) => (
+                  <Cell key={entry.month} fillOpacity={entry.month === reference ? 1 : 0.45} />
+                ))}
+              </Bar>
+            ))}
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  )
+}
+
+const EVENT_MONTH_SERIES: MonthlySeries[] = [
+  { key: 'fechado', label: 'Realizada (fechados)' },
+  { key: 'em_aberto', label: 'Em negociação' },
+]
+
+const PROPOSAL_MONTH_SERIES: MonthlySeries[] = [
+  { key: 'fechado', label: 'Fecharam' },
+  { key: 'em_aberto', label: 'Em aberto (sondagem)' },
+  { key: 'perdido', label: 'Perdidas' },
+]
+
+const MONTHLY_BLOCKS: Record<MonthlyKind, { title: string; series: MonthlySeries[]; getMonth: (lead: MonthlyLead) => ISOMonth | null }> = {
+  event: { title: 'Pelo mês do evento', series: EVENT_MONTH_SERIES, getMonth: eventMonth },
+  proposal: { title: 'Pelo mês da proposta', series: PROPOSAL_MONTH_SERIES, getMonth: proposalMonth },
+}
+
+/** Um gráfico mês a mês com o próprio mês de referência e a própria busca. */
+function MonthlyRevenueBlock({ kind, reloadKey, theme }: { kind: MonthlyKind; reloadKey: string; theme: ChartTheme }) {
+  const block = MONTHLY_BLOCKS[kind]
+  const [reference, setReference] = useState<ISOMonth>(() => currentMonth())
+  const [retryCount, setRetryCount] = useState(0)
+  const months = useMemo(() => monthWindow(reference), [reference])
+
+  // A chave identifica a consulta atual; o carregamento é derivado dela, sem setState síncrono em effect
+  const key = `${kind}|${reference}|${reloadKey}|${retryCount}`
+  const [result, setResult] = useState<AsyncResult<MonthlyLead[]> | null>(null)
+
+  useEffect(() => {
+    let isActive = true
+    const controller = new AbortController()
+    fetchMonthlyLeads(kind, months, controller.signal)
+      .then((data) => {
+        if (isActive) setResult({ key, data, error: null })
+      })
+      .catch(() => {
+        if (isActive) setResult({ key, data: null, error: LOAD_ERROR_MESSAGE })
+      })
+    return () => {
+      isActive = false
+      controller.abort()
+    }
+  }, [key, kind, months])
+
+  const loading = result?.key !== key
+  const leads = result?.data ?? null
+  const error = result?.key === key ? result.error : null
+  const data = useMemo(() => groupValueByMonth(leads ?? [], months, block.getMonth), [leads, months, block])
+  const point = data.find((item) => item.month === reference)
+  const monthName = formatMonthLong(reference)
+  const inputId = `monthly-${kind}`
+
+  const navButton =
+    'rounded-lg border border-slate-200 p-1.5 text-slate-600 transition-colors hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800'
+
+  return (
+    <div className="min-w-0 rounded-lg border border-slate-100 p-4 dark:border-slate-800">
+      <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold text-slate-900 dark:text-white">{block.title}</h3>
+        <div className="flex items-center gap-1.5">
+          {loading && leads !== null && <RefreshCw className="mr-1 h-4 w-4 animate-spin text-slate-400" aria-label="Atualizando" />}
+          <button type="button" onClick={() => setReference(addMonths(reference, -1))} aria-label="Mês anterior" className={navButton}>
+            <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+          </button>
+          <label htmlFor={inputId} className="sr-only">
+            {kind === 'event' ? 'Mês do evento' : 'Mês da proposta'}
+          </label>
+          <input
+            id={inputId}
+            type="month"
+            value={reference}
+            onChange={(event) => event.target.value && setReference(event.target.value)}
+            className={cn(dateInputClassName, 'py-1.5')}
+          />
+          <button type="button" onClick={() => setReference(addMonths(reference, 1))} aria-label="Próximo mês" className={navButton}>
+            <ChevronRight className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </div>
+      </div>
+      <p className="mb-3 text-xs text-slate-500 dark:text-slate-400">
+        {kind === 'event' ? (
+          <>Eventos que acontecem em {monthName}: receita realizada (fechados) e o que ainda está em negociação.</>
+        ) : (
+          <>
+            Propostas feitas em {monthName}:{' '}
+            <strong className="font-semibold text-slate-700 dark:text-slate-200">{formatBRL(point?.total ?? 0)}</strong> no total,
+            pela situação atual de cada uma.
+          </>
+        )}
+      </p>
+
+      {error ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300">
+          <span className="flex items-center gap-2">
+            <CircleAlert className="h-4 w-4 shrink-0" aria-hidden="true" />
+            {error}
+          </span>
+          <button
+            type="button"
+            onClick={() => setRetryCount((current) => current + 1)}
+            className="inline-flex items-center gap-1 font-semibold hover:underline"
+          >
+            <RefreshCw className="h-4 w-4" aria-hidden="true" />
+            Tentar de novo
+          </button>
+        </div>
+      ) : leads === null ? (
+        <Skeleton className="h-72 w-full" />
+      ) : data.every((item) => block.series.every((series) => item[series.key] === 0)) ? (
+        <EmptyChart message={kind === 'event' ? 'Nenhum evento com valor nestes meses.' : 'Nenhuma proposta com valor nestes meses.'} />
+      ) : (
+        <MonthlyRevenueChart data={data} series={block.series} reference={reference} onSelectMonth={setReference} theme={theme} />
+      )}
+    </div>
+  )
+}
+
+function MonthlyRevenueSection({ reloadKey, theme }: { reloadKey: string; theme: ChartTheme }) {
+  return (
+    <section className={cn(cardClassName, 'mt-6 p-5')}>
+      <div className="mb-4">
+        <h2 className="text-base font-semibold text-slate-900 dark:text-white">Receita mês a mês</h2>
+        <p className="mt-0.5 max-w-3xl text-sm text-slate-500 dark:text-slate-400">
+          Cada gráfico tem o seu mês e não depende do período escolhido acima. Clique numa barra para ver aquele mês.
+        </p>
+      </div>
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <MonthlyRevenueBlock kind="event" reloadKey={reloadKey} theme={theme} />
+        <MonthlyRevenueBlock kind="proposal" reloadKey={reloadKey} theme={theme} />
+      </div>
+    </section>
   )
 }
 
@@ -843,13 +1100,13 @@ function FollowUpTable({
               <tr
                 key={lead.id}
                 onClick={(event) => {
-                  if (isRowClick(event.target)) navigate(`/leads/${lead.id}`)
+                  if (isRowClick(event.target)) navigate(`/propostas/${lead.id}`)
                 }}
                 className="cursor-pointer transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/40"
               >
                 <td className="px-5 py-3">
                   <Link
-                    to={`/leads/${lead.id}`}
+                    to={`/propostas/${lead.id}`}
                     className="font-medium text-slate-900 hover:text-brand-700 hover:underline dark:text-white dark:hover:text-brand-300"
                   >
                     {lead.contact_name}
@@ -927,7 +1184,7 @@ function FollowUpTable({
                     <button
                       type="button"
                       onClick={() => onEdit(lead)}
-                      title="Editar lead"
+                      title="Editar proposta"
                       aria-label={`Editar ${lead.contact_name}`}
                       className="rounded-md p-1.5 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
                     >
@@ -1066,7 +1323,7 @@ export default function Dashboard() {
             className="inline-flex items-center gap-2 rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-brand-700"
           >
             <Plus className="h-4 w-4" aria-hidden="true" />
-            Novo Lead
+            Nova Proposta
           </button>
         }
       />
@@ -1163,7 +1420,7 @@ export default function Dashboard() {
           detail={`${formatPercent(kpis.proposalConversionRate)} sobre propostas enviadas (${formatInteger(kpis.closed)}/${formatInteger(kpis.proposalsSent)})`}
           footer={
             <div className="flex items-baseline justify-between gap-2">
-              <span className="text-brand-100">Receita total fechada</span>
+              <span className="text-brand-100" title="Propostas recebidas no período que fecharam">Receita fechada das propostas do período</span>
               <span className="text-lg font-bold tabular-nums" title={formatBRL(kpis.closedValue)}>
                 {formatCurrencyCompact(kpis.closedValue)}
               </span>
@@ -1187,6 +1444,8 @@ export default function Dashboard() {
         closedCount={kpis.closed}
         openCount={kpis.open}
       />
+
+      <MonthlyRevenueSection reloadKey={`${leadsVersion}|${retryCount}`} theme={chartTheme} />
 
       {/* Gráficos */}
       <div className="mt-6 space-y-6">
@@ -1266,7 +1525,7 @@ export default function Dashboard() {
 
       {!hasLeads && !showPeriodSkeleton && !periodError && !customRangeError && (
         <p className="mt-6 text-center text-sm text-slate-500 dark:text-slate-400">
-          Dica: use o botão <strong className="font-semibold">+ Novo Lead</strong> para cadastrar a primeira solicitação.
+          Dica: use o botão <strong className="font-semibold">+ Nova Proposta</strong> para cadastrar a primeira solicitação.
         </p>
       )}
     </>

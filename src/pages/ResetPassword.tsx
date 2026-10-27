@@ -1,9 +1,10 @@
 import { useState, type FormEvent } from 'react'
 import { Link, Navigate, useNavigate } from 'react-router-dom'
-import { CalendarHeart, CircleAlert, CircleCheck, KeyRound, LoaderCircle } from 'lucide-react'
+import { CircleAlert, CircleCheck, KeyRound, LoaderCircle } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { PASSWORD_RULE_TEXT, validatePassword } from '../lib/password'
 import PasswordInput from '../components/PasswordInput'
+import AppLogo from '../components/AppLogo'
 import ThemeToggle from '../components/ThemeToggle'
 import { cn } from '../lib/utils'
 
@@ -55,15 +56,7 @@ export default function ResetPassword() {
       </div>
 
       <div className="w-full max-w-md">
-        <div className="mb-8 flex items-center gap-3">
-          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-brand-900 to-brand-600 text-white">
-            <CalendarHeart className="h-5 w-5" aria-hidden="true" />
-          </span>
-          <div className="leading-tight">
-            <p className="text-base font-bold text-slate-900 dark:text-white">Gestão de Leads</p>
-            <p className="text-xs text-slate-500 dark:text-slate-400">Eventos &amp; Orçamentos</p>
-          </div>
-        </div>
+        <AppLogo size="md" className="mb-8" />
 
         <div className="rounded-2xl border border-slate-200 bg-white p-8 shadow-sm dark:border-slate-800 dark:bg-slate-900">
           <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-brand-50 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300">

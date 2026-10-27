@@ -261,7 +261,7 @@ export default function LeadSearch() {
       })
       .catch(() => {
         if (isActive) {
-          setResult({ key: queryKey, data: null, error: 'Não foi possível carregar os leads. Verifique sua conexão e tente novamente.' })
+          setResult({ key: queryKey, data: null, error: 'Não foi possível carregar as propostas. Verifique sua conexão e tente novamente.' })
         }
       })
     return () => {
@@ -318,7 +318,7 @@ export default function LeadSearch() {
       const [allLeads, exporters] = await Promise.all([fetchAllFilteredLeads(filters, sort), import('../lib/exporters')])
 
       if (allLeads.length === 0) {
-        setExportFeedback({ type: 'error', message: 'Nenhum lead para exportar com os filtros atuais.' })
+        setExportFeedback({ type: 'error', message: 'Nenhuma proposta para exportar com os filtros atuais.' })
         return
       }
 
@@ -356,7 +356,7 @@ export default function LeadSearch() {
       const exporters = await import('../lib/exporters')
       if (preview.kind === 'xlsx') {
         exporters.exportLeadsToXlsx(preview.leads)
-        setExportFeedback({ type: 'success', message: `Planilha gerada com ${preview.leads.length} lead(s).` })
+        setExportFeedback({ type: 'success', message: `Planilha gerada com ${preview.leads.length} proposta(s).` })
       } else if (preview.kind === 'csv') {
         const summary = exporters.exportMailingToCsv(preview.mailing)
         const merged = summary.mergedDuplicates
@@ -364,12 +364,12 @@ export default function LeadSearch() {
           `Mailing gerado com ${summary.contacts} contato(s) único(s).`,
           merged > 0 ? `${merged} orçamento(s) repetido(s) do mesmo cliente foram agrupados.` : null,
           summary.optedOut > 0 ? `${summary.optedOut} contato(s) com opt-out LGPD foram ignorados.` : null,
-          summary.skipped > 0 ? `${summary.skipped} lead(s) sem e-mail nem telefone ficaram de fora.` : null,
+          summary.skipped > 0 ? `${summary.skipped} proposta(s) sem e-mail nem telefone ficaram de fora.` : null,
         ]
         setExportFeedback({ type: 'success', message: parts.filter(Boolean).join(' ') })
       } else {
         exporters.exportLeadsToPdf(preview.leads, preview.filters)
-        setExportFeedback({ type: 'success', message: `Relatório PDF gerado com ${preview.leads.length} lead(s).` })
+        setExportFeedback({ type: 'success', message: `Relatório PDF gerado com ${preview.leads.length} proposta(s).` })
       }
       setPreview(null)
     } catch {
@@ -385,8 +385,8 @@ export default function LeadSearch() {
   return (
     <>
       <PageHeader
-        title="Consultar Leads"
-        description="Pesquise, filtre e exporte os leads cadastrados."
+        title="Consultar Propostas"
+        description="Cada solicitação de orçamento, sondagem ou proposta enviada. Pesquise, filtre e exporte."
         actions={
           <>
             <ExportButton kind="xlsx" label="Exportar Excel (.xlsx)" icon={FileSpreadsheet} busy={exporting} disabled={total === 0 || dateRangeInvalid} onClick={handleExport} />
@@ -425,12 +425,12 @@ export default function LeadSearch() {
         <div className="relative">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" aria-hidden="true" />
           <label htmlFor="search-text" className="sr-only">
-            Buscar por nome, empresa, e-mail, telefone ou nº da proposta
+            Buscar por nome, empresa, CNPJ, e-mail, telefone ou nº da proposta
           </label>
           <input
             id="search-text"
             type="search"
-            placeholder="Buscar por nome, empresa, e-mail, telefone ou nº da proposta..."
+            placeholder="Buscar por nome, empresa, CNPJ, e-mail, telefone ou nº da proposta..."
             value={searchInput}
             onChange={(event) => setSearchInput(event.target.value)}
             className={cn(controlClassName, 'py-2.5 pl-10')}
@@ -591,7 +591,7 @@ export default function LeadSearch() {
             ) : (
               <>
                 <strong className="font-semibold text-slate-900 dark:text-white">{total.toLocaleString('pt-BR')}</strong>{' '}
-                {total === 1 ? 'lead encontrado' : 'leads encontrados'}
+                {total === 1 ? 'proposta encontrada' : 'propostas encontradas'}
                 {loading && <LoaderCircle className="ml-2 inline h-4 w-4 animate-spin text-slate-400" aria-label="Atualizando" />}
               </>
             )}
@@ -637,8 +637,8 @@ export default function LeadSearch() {
               {page > 0
                 ? 'Esta página ficou vazia (os resultados mudaram).'
                 : activeFilterCount > 0
-                  ? 'Nenhum lead encontrado com esses filtros.'
-                  : 'Nenhum lead cadastrado ainda.'}
+                  ? 'Nenhuma proposta encontrada com esses filtros.'
+                  : 'Nenhuma proposta cadastrada ainda.'}
             </p>
             {page > 0 ? (
               <button type="button" onClick={() => setPage(0)} className="text-sm font-semibold text-brand-600 hover:underline dark:text-brand-400">
@@ -676,7 +676,7 @@ export default function LeadSearch() {
                   <tr
                     key={lead.id}
                     onClick={(event) => {
-                      if (isRowClick(event.target)) navigate(`/leads/${lead.id}`)
+                      if (isRowClick(event.target)) navigate(`/propostas/${lead.id}`)
                     }}
                     className="cursor-pointer align-top transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/40"
                   >
@@ -685,7 +685,7 @@ export default function LeadSearch() {
                     </td>
                     <td className="px-3 py-3">
 <Link
-                        to={`/leads/${lead.id}`}
+                        to={`/propostas/${lead.id}`}
                         className="font-medium text-slate-900 hover:text-brand-700 hover:underline dark:text-white dark:hover:text-brand-300"
                       >
                         {lead.contact_name}
@@ -698,6 +698,7 @@ export default function LeadSearch() {
                           </span>
                         </p>
                       )}
+                      {lead.cnpj && <p className="mt-0.5 text-xs tabular-nums text-slate-500 dark:text-slate-400">CNPJ {lead.cnpj}</p>}
                       <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
                         <span>{[lead.contact_phone, lead.contact_email].filter(Boolean).join(' · ') || 'Sem contato'}</span>
                         <WhatsAppButton lead={lead} />

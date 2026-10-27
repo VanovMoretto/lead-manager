@@ -82,7 +82,7 @@ function sanitizeSearchTerm(term: string): string {
 }
 
 /**
- * Condições de busca textual (nome, e-mail, telefone ou nº da proposta).
+ * Condições de busca textual (nome, empresa, CNPJ, e-mail, telefone ou nº da proposta).
  * Telefones ficam salvos com máscara; quando a busca tem dígitos, procura também
  * na coluna gerada `contact_phone_digits` ("11987654321" encontra "(11) 98765-4321").
  */
@@ -97,11 +97,12 @@ function buildSearchConditions(rawTerm: string): string | null {
     `contact_phone.ilike.${pattern}`,
     `proposal_number.ilike.${pattern}`,
     `company.ilike.${pattern}`,
+    `cnpj.ilike.${pattern}`,
   ]
 
   const digits = onlyDigits(term)
   if (digits.length >= 3) {
-    conditions.push(`contact_phone_digits.like.*${digits}*`)
+    conditions.push(`contact_phone_digits.like.*${digits}*`, `cnpj_digits.like.*${digits}*`)
   }
 
   return conditions.join(',')

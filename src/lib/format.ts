@@ -23,6 +23,29 @@ export function isValidPhoneBR(value: string): boolean {
   return length === 10 || length === 11
 }
 
+/** Máscara de CNPJ: 00.000.000/0000-00 (aplicada enquanto digita). */
+export function formatCNPJ(value: string): string {
+  const digits = onlyDigits(value).slice(0, 14)
+  if (digits.length <= 2) return digits
+  if (digits.length <= 5) return `${digits.slice(0, 2)}.${digits.slice(2)}`
+  if (digits.length <= 8) return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5)}`
+  if (digits.length <= 12) return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}/${digits.slice(8)}`
+  return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}/${digits.slice(8, 12)}-${digits.slice(12)}`
+}
+
+/** CNPJ com 14 dígitos e os dois dígitos verificadores corretos (sequências repetidas são inválidas). */
+export function isValidCNPJ(value: string): boolean {
+  const digits = onlyDigits(value)
+  if (digits.length !== 14 || /^(\d)\1{13}$/.test(digits)) return false
+  const checkDigit = (length: number) => {
+    const weights = length === 12 ? [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2] : [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]
+    const sum = weights.reduce((total, weight, index) => total + Number(digits[index]) * weight, 0)
+    const rest = sum % 11
+    return rest < 2 ? 0 : 11 - rest
+  }
+  return checkDigit(12) === Number(digits[12]) && checkDigit(13) === Number(digits[13])
+}
+
 const brlFormatter = new Intl.NumberFormat('pt-BR', {
   style: 'currency',
   currency: 'BRL',

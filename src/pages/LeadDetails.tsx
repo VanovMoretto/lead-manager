@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent, type
 import { Link, useOutletContext, useParams } from 'react-router-dom'
 import {
   ArrowLeft,
+  ArrowRight,
   BedDouble,
   Building2,
   CalendarDays,
@@ -26,6 +27,7 @@ import {
   Trash2,
   Upload,
   UtensilsCrossed,
+  UserRound,
   type LucideIcon,
 } from 'lucide-react'
 import type { LayoutOutletContext } from '../components/Layout'
@@ -52,6 +54,7 @@ import {
   ATTACHMENT_KINDS,
   ATTACHMENT_KIND_LABELS,
   type AttachmentKind,
+  type Client,
   type Lead,
   type LeadAttachment,
   type LeadStatus,
@@ -500,8 +503,46 @@ const QUICK_ACTIONS: Array<{ status: LeadStatus; label: string; icon: LucideIcon
   },
 ]
 
+/** Link para a página consolidada do cliente (empresa ou pessoa física) dono desta proposta. */
+function ClientLink({ clientId }: { clientId: string }) {
+  const [client, setClient] = useState<Pick<Client, 'id' | 'name' | 'client_type'> | null>(null)
+
+  useEffect(() => {
+    let isActive = true
+    supabase
+      .from('clients')
+      .select('id, name, client_type')
+      .eq('id', clientId)
+      .maybeSingle()
+      .then(({ data, error }) => {
+        // Informativo: sem o cliente (ou sem a migração 009), o link simplesmente não aparece
+        if (isActive && !error) setClient(data)
+      })
+    return () => {
+      isActive = false
+    }
+  }, [clientId])
+
+  if (!client || client.id !== clientId) return null
+  const Icon = client.client_type === 'company' ? Building2 : UserRound
+
+  return (
+    <Link
+      to={`/leads/${client.id}`}
+      className="mt-2 inline-flex max-w-full items-center gap-2 rounded-lg border border-brand-200 bg-brand-50 px-3 py-1.5 text-sm font-medium text-brand-800 transition-colors hover:bg-brand-100 dark:border-brand-900/60 dark:bg-brand-900/20 dark:text-brand-200 dark:hover:bg-brand-900/40"
+    >
+      <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+      <span className="truncate">
+        Ver histórico {client.client_type === 'company' ? 'da empresa' : 'do cliente'}{' '}
+        <strong className="font-semibold">{client.name}</strong>
+      </span>
+      <ArrowRight className="h-4 w-4 shrink-0" aria-hidden="true" />
+    </Link>
+  )
+}
+
 export default function LeadDetails() {
-  const { leadId = '' } = useParams()
+  const { proposalId: leadId = '' } = useParams()
   const { openEditLead, leadsVersion } = useOutletContext<LayoutOutletContext>()
   const [retryCount, setRetryCount] = useState(0)
 
@@ -522,7 +563,7 @@ export default function LeadDetails() {
         if (error) {
           // id fora do formato uuid cai aqui como "não encontrado"
           const notFound = error.code === '22P02'
-          setResult({ key, data: null, error: notFound ? null : 'Não foi possível carregar o lead. Verifique sua conexão.' })
+          setResult({ key, data: null, error: notFound ? null : 'Não foi possível carregar a proposta. Verifique sua conexão.' })
           return
         }
         setResult({ key, data, error: null })
@@ -542,11 +583,11 @@ export default function LeadDetails() {
 
   const backLink = (
     <Link
-      to="/leads"
+      to="/propostas"
       className="inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 transition-colors hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
     >
       <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-      Consultar Leads
+      Consultar Propostas
     </Link>
   )
 
@@ -563,8 +604,8 @@ export default function LeadDetails() {
           <ErrorBanner message={error} onRetry={() => setRetryCount((current) => current + 1)} />
         ) : (
           <div className={cn(cardClassName, 'p-10 text-center')}>
-            <p className="text-base font-semibold text-slate-900 dark:text-white">Lead não encontrado</p>
-            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Ele pode ter sido excluído ou o link está incorreto.</p>
+            <p className="text-base font-semibold text-slate-900 dark:text-white">Proposta não encontrada</p>
+            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Ela pode ter sido excluída ou o link está incorreto.</p>
           </div>
         )}
       </div>
@@ -597,8 +638,10 @@ export default function LeadDetails() {
             <p className="mt-1 flex items-center gap-1.5 text-sm font-medium text-slate-600 dark:text-slate-300">
               <Building2 className="h-4 w-4 text-slate-400" aria-hidden="true" />
               {lead.company}
+              {lead.cnpj && <span className="font-normal tabular-nums text-slate-500 dark:text-slate-400">· CNPJ {lead.cnpj}</span>}
             </p>
           )}
+          {lead.client_id && <ClientLink clientId={lead.client_id} />}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <WhatsAppButton lead={lead} />
