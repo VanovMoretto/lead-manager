@@ -1,10 +1,51 @@
 import { supabase } from './supabase'
-import { randomStorageName, resolveMimeType, translateStorageError, formatFileSize } from './storage'
+import { randomStorageName, translateStorageError, formatFileSize } from './storage'
 import type { AttachmentKind, LeadAttachment } from '../types/lead'
 
 export const ATTACHMENT_BUCKET = 'lead-attachments'
-export const ATTACHMENT_TYPES = ['application/pdf', 'image/png', 'image/jpeg', 'image/webp'] as const
 export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
+
+/** Formatos aceitos nas propostas: extensão, tipo MIME e assinatura dos primeiros bytes do arquivo. */
+const ATTACHMENT_FORMATS = [
+  { extensions: ['pdf'], mime: 'application/pdf', signature: [0x25, 0x50, 0x44, 0x46] },
+  { extensions: ['doc'], mime: 'application/msword', signature: [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1] },
+  {
+    extensions: ['docx'],
+    mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    signature: [0x50, 0x4b, 0x03, 0x04],
+  },
+  { extensions: ['png'], mime: 'image/png', signature: [0x89, 0x50, 0x4e, 0x47] },
+  { extensions: ['jpg', 'jpeg'], mime: 'image/jpeg', signature: [0xff, 0xd8, 0xff] },
+] as const
+
+/** Valor do `accept` do campo de arquivo. */
+export const ATTACHMENT_ACCEPT = ATTACHMENT_FORMATS.flatMap((format) => [...format.extensions.map((ext) => `.${ext}`), format.mime]).join(',')
+
+export const ATTACHMENT_FORMATS_LABEL = 'PDF, DOC, DOCX, PNG ou JPG'
+
+/**
+ * Confere o arquivo antes do envio: extensão permitida, tipo informado pelo navegador compatível
+ * com a extensão e conteúdo começando com a assinatura do formato (evita arquivo renomeado).
+ * Retorna o tipo MIME a gravar; lança Error com a mensagem para a tela.
+ */
+export async function validateAttachmentFile(file: File): Promise<string> {
+  const extension = file.name.includes('.') ? file.name.split('.').pop()!.toLowerCase() : ''
+  const format = ATTACHMENT_FORMATS.find((item) => (item.extensions as readonly string[]).includes(extension))
+  if (!format) throw new Error(`Formato não permitido. Envie ${ATTACHMENT_FORMATS_LABEL}.`)
+  if (file.size === 0) throw new Error('O arquivo está vazio.')
+  if (file.size > MAX_ATTACHMENT_BYTES) {
+    throw new Error(`O arquivo pode ter no máximo ${formatFileSize(MAX_ATTACHMENT_BYTES)}.`)
+  }
+  const browserMime = file.type === 'image/jpg' ? 'image/jpeg' : file.type
+  if (browserMime && browserMime !== format.mime) {
+    throw new Error('O tipo do arquivo não corresponde à extensão.')
+  }
+  const header = new Uint8Array(await file.slice(0, format.signature.length).arrayBuffer())
+  if (!format.signature.every((byte, index) => header[index] === byte)) {
+    throw new Error('O conteúdo do arquivo não corresponde ao formato indicado pela extensão.')
+  }
+  return format.mime
+}
 
 /** Validade do link temporário para abrir/baixar um anexo. */
 const SIGNED_URL_SECONDS = 60
@@ -21,12 +62,7 @@ export async function fetchLeadAttachments(leadId: string): Promise<LeadAttachme
 
 /** Envia o arquivo ao bucket e registra o anexo. Lança Error com mensagem pronta para a tela. */
 export async function uploadLeadAttachment(leadId: string, kind: AttachmentKind, file: File): Promise<LeadAttachment> {
-  const mimeType = resolveMimeType(file, ATTACHMENT_TYPES)
-  if (!mimeType) throw new Error('Envie um PDF ou uma imagem (PNG, JPG ou WEBP).')
-  if (file.size === 0) throw new Error('O arquivo está vazio.')
-  if (file.size > MAX_ATTACHMENT_BYTES) {
-    throw new Error(`O arquivo pode ter no máximo ${formatFileSize(MAX_ATTACHMENT_BYTES)}.`)
-  }
+  const mimeType = await validateAttachmentFile(file)
 
   const path = `${leadId}/${kind}/${randomStorageName(mimeType)}`
   const upload = await supabase.storage.from(ATTACHMENT_BUCKET).upload(path, file, { contentType: mimeType, upsert: false })

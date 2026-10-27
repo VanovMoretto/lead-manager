@@ -1,13 +1,27 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
-import { CalendarHeart, CircleAlert, CircleCheck, Eye, EyeOff, LoaderCircle, Lock, User } from 'lucide-react'
+import { CalendarHeart, CircleAlert, CircleCheck, Eye, EyeOff, LoaderCircle, Lock, ShieldAlert, User } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import ThemeToggle from '../components/ThemeToggle'
+import Turnstile, { type TurnstileHandle } from '../components/Turnstile'
+import { TURNSTILE_SITE_KEY } from '../lib/turnstile'
 import type { RedirectState } from '../components/PrivateRoute'
 import { cn } from '../lib/utils'
 import { getRememberSession } from '../lib/supabase'
+import {
+  MAX_FAILED_ATTEMPTS,
+  clearLoginThrottle,
+  getLoginThrottle,
+  lockSecondsLeft,
+  registerLoginFailure,
+  registerResetRequest,
+  resetCooldownLeft,
+} from '../lib/loginThrottle'
 
-/** "Salvar credenciais": guarda só o usuário (nunca a senha) para preencher no próximo acesso. */
+/**
+ * "Lembrar meu usuário": guarda só o usuário, nunca a senha. A senha fica a cargo do
+ * gerenciador de senhas do navegador (campos com name/autocomplete corretos).
+ */
 const SAVED_USERNAME_KEY = 'gestao-leads-usuario-salvo'
 
 function readSavedUsername(): string {
@@ -25,6 +39,17 @@ function writeSavedUsername(username: string | null): void {
   } catch {
     // Navegador sem localStorage: apenas não lembra o usuário
   }
+}
+
+/** Erros que não contam como tentativa de senha (sem conexão, captcha pendente). */
+function countsAsFailedAttempt(message: string): boolean {
+  const normalized = message.toLowerCase()
+  return !normalized.includes('conectar') && !normalized.includes('captcha')
+}
+
+function formatWait(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`
+  return `${Math.floor(seconds / 60)}min ${String(seconds % 60).padStart(2, '0')}s`
 }
 
 const checkboxClassName =
@@ -53,6 +78,25 @@ export default function Login() {
   const [error, setError] = useState<string | null>(null)
   const [info, setInfo] = useState<string | null>(null)
 
+  // Freio contra força bruta e cooldown do "Esqueci minha senha" (persistidos no navegador)
+  const [throttle, setThrottle] = useState(getLoginThrottle)
+  const [resetUntil, setResetUntil] = useState(() => Date.now() + resetCooldownLeft() * 1000)
+  const [now, setNow] = useState(() => Date.now())
+  const lockLeft = lockSecondsLeft(throttle, now)
+  const resetLeft = Math.max(0, Math.ceil((resetUntil - now) / 1000))
+
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null)
+  const turnstileRef = useRef<TurnstileHandle>(null)
+  const captchaRequired = TURNSTILE_SITE_KEY !== ''
+
+  // Contador regressivo enquanto houver bloqueio ou cooldown
+  const ticking = lockLeft > 0 || resetLeft > 0
+  useEffect(() => {
+    if (!ticking) return
+    const interval = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(interval)
+  }, [ticking])
+
   const redirectTo = (location.state as RedirectState | null)?.from ?? '/'
 
   // Já logado: vai direto para o app (ou para definir a nova senha, se veio do link de recuperação)
@@ -67,20 +111,38 @@ export default function Login() {
     setError(null)
     setInfo(null)
 
+    if (lockSecondsLeft(getLoginThrottle()) > 0) {
+      setThrottle(getLoginThrottle())
+      setNow(Date.now())
+      return
+    }
     if (!identifier.trim() || !password) {
       setError('Informe usuário e senha.')
       return
     }
+    if (captchaRequired && !captchaToken) {
+      setError('Confirme a verificação de segurança para entrar.')
+      return
+    }
 
     setSubmitting(true)
-    const result = await signIn(identifier, password, { remember })
+    const result = await signIn(identifier, password, { remember, captchaToken: captchaToken ?? undefined })
     setSubmitting(false)
+    // Cada token do captcha vale para uma tentativa só
+    turnstileRef.current?.reset()
 
     if (result.error) {
+      if (countsAsFailedAttempt(result.error)) {
+        const next = registerLoginFailure()
+        setThrottle(next)
+        setNow(Date.now())
+        setPassword('')
+      }
       setError(result.error)
       return
     }
 
+    clearLoginThrottle()
     writeSavedUsername(saveUsername ? identifier.trim() : null)
     navigate(redirectTo, { replace: true })
   }
@@ -95,10 +157,24 @@ export default function Login() {
       document.getElementById('username')?.focus()
       return
     }
+    if (resetCooldownLeft() > 0) {
+      setResetUntil(Date.now() + resetCooldownLeft() * 1000)
+      setNow(Date.now())
+      return
+    }
+    if (captchaRequired && !captchaToken) {
+      setError('Confirme a verificação de segurança para receber o link.')
+      return
+    }
 
     setSendingReset(true)
-    const result = await requestPasswordReset(identifier)
+    const result = await requestPasswordReset(identifier, captchaToken ?? undefined)
     setSendingReset(false)
+    turnstileRef.current?.reset()
+    // Intervalo mínimo entre pedidos, para não disparar e-mails em massa
+    registerResetRequest()
+    setResetUntil(Date.now() + resetCooldownLeft() * 1000)
+    setNow(Date.now())
 
     if (result.error) {
       setError(result.error)
@@ -156,7 +232,7 @@ export default function Login() {
             <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Entrar</h2>
             <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Use seu usuário e senha cadastrados.</p>
 
-            <form onSubmit={handleSubmit} className="mt-8 space-y-5" noValidate>
+            <form onSubmit={handleSubmit} method="post" action="#" className="mt-8 space-y-5" noValidate>
               <div>
                 <label htmlFor="username" className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">
                   Usuário
@@ -168,8 +244,10 @@ export default function Login() {
                   />
                   <input
                     id="username"
+                    name="username"
                     type="text"
                     autoComplete="username"
+                    maxLength={254}
                     autoCapitalize="none"
                     spellCheck={false}
                     placeholder="Usuário"
@@ -193,8 +271,10 @@ export default function Login() {
                   />
                   <input
                     id="password"
+                    name="password"
                     type={showPassword ? 'text' : 'password'}
                     autoComplete="current-password"
+                    maxLength={72}
                     placeholder="••••••••"
                     value={password}
                     onChange={(event) => setPassword(event.target.value)}
@@ -237,19 +317,44 @@ export default function Login() {
                       disabled={busy}
                       className={checkboxClassName}
                     />
-                    Salvar credenciais
+                    Lembrar meu usuário
                   </label>
                 </div>
                 <button
                   type="button"
                   onClick={() => void handleForgotPassword()}
-                  disabled={busy}
+                  disabled={busy || resetLeft > 0}
+                  title={resetLeft > 0 ? `Aguarde ${resetLeft}s para pedir outro link` : undefined}
                   className="inline-flex items-center gap-1.5 text-sm font-semibold text-brand-600 hover:underline disabled:cursor-not-allowed disabled:opacity-60 dark:text-brand-400"
                 >
                   {sendingReset && <LoaderCircle className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />}
-                  Esqueci minha senha
+                  {resetLeft > 0 ? `Esqueci minha senha (${resetLeft}s)` : 'Esqueci minha senha'}
                 </button>
               </div>
+
+              <Turnstile ref={turnstileRef} onToken={setCaptchaToken} />
+
+              {lockLeft > 0 ? (
+                <div
+                  role="alert"
+                  className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300"
+                >
+                  <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                  <span>
+                    Muitas tentativas sem sucesso. Por segurança, o login está bloqueado por{' '}
+                    <strong className="tabular-nums">{formatWait(lockLeft)}</strong>.
+                  </span>
+                </div>
+              ) : (
+                throttle.lockLevel === 0 &&
+                throttle.failures >= MAX_FAILED_ATTEMPTS - 2 && (
+                  <p className="text-xs font-medium text-amber-700 dark:text-amber-400">
+                    {MAX_FAILED_ATTEMPTS - throttle.failures === 1
+                      ? 'Última tentativa antes do bloqueio temporário.'
+                      : `Restam ${MAX_FAILED_ATTEMPTS - throttle.failures} tentativas antes do bloqueio temporário.`}
+                  </p>
+                )
+              )}
 
               {accessNotice && !error && (
                 <div
@@ -271,7 +376,7 @@ export default function Login() {
                 </div>
               )}
 
-              {error && (
+              {error && lockLeft === 0 && (
                 <div
                   role="alert"
                   className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300"
@@ -283,7 +388,7 @@ export default function Login() {
 
               <button
                 type="submit"
-                disabled={busy}
+                disabled={busy || lockLeft > 0}
                 className={cn(
                   'flex w-full items-center justify-center gap-2 rounded-lg bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors',
                   'hover:bg-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 focus-visible:ring-offset-2',
@@ -291,7 +396,7 @@ export default function Login() {
                 )}
               >
                 {submitting && <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />}
-                {submitting ? 'Entrando...' : 'Entrar'}
+                {submitting ? 'Entrando...' : lockLeft > 0 ? `Aguarde ${formatWait(lockLeft)}` : 'Entrar'}
               </button>
             </form>
           </div>

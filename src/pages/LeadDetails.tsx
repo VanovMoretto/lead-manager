@@ -35,7 +35,8 @@ import { useAuth } from '../contexts/AuthContext'
 import { formatBRL } from '../lib/format'
 import { formatLeadEventPeriod, getLeadRooms, getLeadValues, hasAnyValue } from '../lib/leadFields'
 import {
-  ATTACHMENT_TYPES,
+  ATTACHMENT_ACCEPT,
+  ATTACHMENT_FORMATS_LABEL,
   MAX_ATTACHMENT_BYTES,
   deleteLeadAttachment,
   downloadLeadAttachment,
@@ -45,6 +46,7 @@ import {
 } from '../lib/leadAttachments'
 import { formatFileSize } from '../lib/storage'
 import { supabase } from '../lib/supabase'
+import { RateLimitError, guardMutation, isAbortError } from '../lib/rateLimit'
 import { cn } from '../lib/utils'
 import {
   ATTACHMENT_KINDS,
@@ -139,7 +141,17 @@ function ObservationsCard({ lead, onSaved }: { lead: Lead; onSaved: (lead: Lead)
     setSaving(true)
     setFeedback(null)
     const value = draft.trim() ? draft : null
-    const { data, error } = await supabase.from('leads').update({ observations: value }).eq('id', lead.id).select().single()
+    let response
+    try {
+      response = await guardMutation(`lead:observations:${lead.id}:${value ?? ''}`, async () =>
+        supabase.from('leads').update({ observations: value }).eq('id', lead.id).select().single(),
+      )
+    } catch (guardError) {
+      setSaving(false)
+      if (guardError instanceof RateLimitError) setFeedback({ type: 'error', message: guardError.message })
+      return
+    }
+    const { data, error } = response
     setSaving(false)
     if (error) {
       setFeedback({
@@ -330,7 +342,11 @@ function AttachmentGroup({
     const failures: string[] = []
     for (const file of files) {
       try {
-        onUploaded(await uploadLeadAttachment(leadId, kind, file))
+        onUploaded(
+          await guardMutation(`attachment:${leadId}:${kind}:${file.name}:${file.size}:${file.lastModified}`, () =>
+            uploadLeadAttachment(leadId, kind, file),
+          ),
+        )
       } catch (uploadError) {
         failures.push(`${file.name}: ${uploadError instanceof Error ? uploadError.message : 'falha no envio.'}`)
       }
@@ -352,7 +368,7 @@ function AttachmentGroup({
           id={inputId}
           type="file"
           multiple
-          accept={ATTACHMENT_TYPES.join(',')}
+          accept={ATTACHMENT_ACCEPT}
           className="sr-only"
           tabIndex={-1}
           aria-hidden="true"
@@ -456,7 +472,7 @@ function AttachmentsCard({ leadId }: { leadId: string }) {
             />
           ))}
           <p className="text-xs text-slate-500 dark:text-slate-400">
-            PDF ou imagem (PNG, JPG, WEBP) de até {formatFileSize(MAX_ATTACHMENT_BYTES)}.
+            {ATTACHMENT_FORMATS_LABEL} de até {formatFileSize(MAX_ATTACHMENT_BYTES)} por arquivo.
             {!isAdmin && ' Somente o ADMIN exclui anexos.'}
           </p>
         </div>
@@ -494,13 +510,15 @@ export default function LeadDetails() {
 
   useEffect(() => {
     let isActive = true
+    const controller = new AbortController()
     supabase
       .from('leads')
       .select('*')
       .eq('id', leadId)
+      .abortSignal(controller.signal)
       .maybeSingle()
       .then(({ data, error }) => {
-        if (!isActive) return
+        if (!isActive || isAbortError(error)) return
         if (error) {
           // id fora do formato uuid cai aqui como "não encontrado"
           const notFound = error.code === '22P02'
@@ -511,6 +529,7 @@ export default function LeadDetails() {
       })
     return () => {
       isActive = false
+      controller.abort()
     }
   }, [key, leadId])
 

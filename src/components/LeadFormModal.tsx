@@ -39,6 +39,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { useRecurringClient } from '../hooks/useRecurringClient'
 import { useCompanies } from '../hooks/useCompanies'
 import { fetchLeadAttachmentPaths, removeAttachmentFiles } from '../lib/leadAttachments'
+import { RateLimitError, guardMutation } from '../lib/rateLimit'
 import {
   DEFAULT_LOSS_REASONS,
   LOSS_REASON_OTHER,
@@ -225,6 +226,9 @@ function translateDbError(error: PostgrestError): { message: string; field?: Fie
     if (error.message.includes('leads_contact_name_not_blank')) {
       return { message: 'Informe o nome do contato.', field: 'contact_name' }
     }
+    if (error.message.includes('leads_text_lengths')) {
+      return { message: 'Algum campo passou do tamanho máximo permitido. Encurte o texto e tente de novo.' }
+    }
     if (error.message.includes('leads_event_period_valid')) {
       return { message: 'A data final precisa ser igual ou posterior à inicial.', field: 'event_end_date' }
     }
@@ -232,6 +236,9 @@ function translateDbError(error: PostgrestError): { message: string; field?: Fie
       return { message: 'Os valores da proposta não podem ser negativos.' }
     }
     return { message: 'Algum campo tem um valor que o banco não aceitou. Revise o formulário.' }
+  }
+  if (error.code === 'P0001' && error.message.includes('Limite de requisições')) {
+    return { message: 'Limite de requisições excedido. Aguarde um instante e tente de novo.' }
   }
   if (error.code === '42501') {
     return { message: 'Você não tem permissão para salvar este lead. Faça login novamente.' }
@@ -597,9 +604,19 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
     setSubmitError(null)
 
     const payload = buildPayload(form, optOutForced)
-    const response = lead
-      ? await supabase.from('leads').update(payload).eq('id', lead.id).select().single()
-      : await supabase.from('leads').insert(payload).select().single()
+    let response
+    try {
+      // Mesmo envio repetido em menos de 1,5 s (duplo clique, Enter segurado) é recusado
+      response = await guardMutation(`lead:save:${lead?.id ?? 'novo'}:${JSON.stringify(payload)}`, async () =>
+        lead
+          ? await supabase.from('leads').update(payload).eq('id', lead.id).select().single()
+          : await supabase.from('leads').insert(payload).select().single(),
+      )
+    } catch (guardError) {
+      setSubmitting(false)
+      if (guardError instanceof RateLimitError) setSubmitError(guardError.message)
+      return
+    }
 
     setSubmitting(false)
 
@@ -685,6 +702,7 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
             <input
               id="lead-contact_name"
               type="text"
+              maxLength={150}
               autoFocus
               autoComplete="off"
               placeholder="Ex.: Nome do contato"
@@ -715,6 +733,7 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
               <input
                 id="lead-contact_email"
                 type="email"
+                maxLength={254}
                 autoComplete="off"
                 placeholder="Ex.: email@dominio.com.br"
                 value={form.contact_email}
@@ -1036,6 +1055,7 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
                 <input
                   id="lead-proposal_number"
                   type="text"
+                  maxLength={50}
                   autoComplete="off"
                   placeholder="Ex.: Número da proposta"
                   value={form.proposal_number}
@@ -1111,6 +1131,7 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
                   <textarea
                     id="lead-loss_reason_details"
                     rows={3}
+                    maxLength={2000}
                     placeholder="Descreva o motivo da perda"
                     value={form.loss_reason_details}
                     onChange={(event) => update('loss_reason_details', event.target.value)}

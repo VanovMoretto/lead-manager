@@ -31,6 +31,38 @@ comment on column public.leads.total_value  is 'Receita total da proposta: loca�
 -- Os usuários continuam sendo criados no Supabase (Authentication → Users);
 -- o perfil nasce sozinho pelo trigger em auth.users.
 -- -----------------------------------------------------------------------------
+-- Tabela user_profiles de antes desta migração, sem a coluna user_id (estrutura diferente):
+-- é preservada como user_profiles_legacy e os ADMINs dela são copiados mais abaixo
+do $$
+declare
+  v_trigger record;
+begin
+  if to_regclass('public.user_profiles') is not null and not exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'user_profiles' and column_name = 'user_id'
+  ) then
+    if to_regclass('public.user_profiles_legacy') is not null then
+      raise exception 'Já existem public.user_profiles (sem user_id) e public.user_profiles_legacy. Remova ou renomeie uma delas e rode de novo.';
+    end if;
+    alter table public.user_profiles rename to user_profiles_legacy;
+
+    -- Triggers antigos em auth.users que gravavam na tabela antiga passariam a gravar na nova
+    -- (com outras colunas) e travariam a criação de usuários: o trigger desta migração os substitui
+    for v_trigger in
+      select t.tgname
+      from pg_trigger t
+      join pg_proc p on p.oid = t.tgfoid
+      where t.tgrelid = 'auth.users'::regclass
+        and not t.tgisinternal
+        and t.tgname <> 'on_auth_user_sync_profile'
+        and p.prosrc ilike '%user_profiles%'
+    loop
+      execute format('drop trigger %I on auth.users', v_trigger.tgname);
+    end loop;
+  end if;
+end;
+$$;
+
 create table if not exists public.user_profiles (
   user_id          uuid primary key references auth.users (id) on delete cascade,
   email            text,
@@ -44,6 +76,20 @@ create table if not exists public.user_profiles (
   constraint user_profiles_avatar_path_own_folder
     check (avatar_path is null or avatar_path like user_id::text || '/%')
 );
+
+-- Tabela user_profiles antiga que já usava user_id: completa as colunas que faltarem
+alter table public.user_profiles add column if not exists email           text;
+alter table public.user_profiles add column if not exists is_admin        boolean not null default false;
+alter table public.user_profiles add column if not exists is_active       boolean not null default true;
+alter table public.user_profiles add column if not exists avatar_path     text;
+alter table public.user_profiles add column if not exists last_sign_in_at timestamptz;
+alter table public.user_profiles add column if not exists created_at      timestamptz not null default now();
+
+create unique index if not exists user_profiles_user_id_key on public.user_profiles (user_id);
+
+alter table public.user_profiles drop constraint if exists user_profiles_avatar_path_own_folder;
+alter table public.user_profiles add  constraint user_profiles_avatar_path_own_folder
+  check (avatar_path is null or avatar_path like user_id::text || '/%');
 
 comment on table  public.user_profiles             is 'Perfil de cada usuário do Supabase Auth: acesso ativo, papel ADMIN e avatar.';
 comment on column public.user_profiles.is_admin    is 'ADMIN: Painel Admin, gestão de usuários e exclusões.';
@@ -89,6 +135,52 @@ begin
     execute 'update public.user_profiles p set is_admin = true
              where exists (select 1 from public.app_admins a where a.user_id = p.user_id)';
   end if;
+end;
+$$;
+
+-- ADMINs marcados na tabela user_profiles antiga (is_admin = true ou papel "admin")
+do $$
+declare
+  v_id_col text;
+  v_col record;
+begin
+  if to_regclass('public.user_profiles_legacy') is null then
+    return;
+  end if;
+
+  -- Coluna com o id do usuário do Supabase Auth
+  select c.column_name into v_id_col
+  from information_schema.columns c
+  where c.table_schema = 'public' and c.table_name = 'user_profiles_legacy'
+    and c.data_type = 'uuid' and c.column_name in ('user_id', 'id', 'auth_id', 'uid', 'profile_id')
+  order by array_position(array['user_id', 'id', 'auth_id', 'uid', 'profile_id'], c.column_name::text)
+  limit 1;
+
+  if v_id_col is null then
+    raise notice 'user_profiles_legacy sem coluna de id do usuário: defina os ADMINs no Painel Admin ou pelo SQL do fim do arquivo.';
+    return;
+  end if;
+
+  for v_col in
+    select c.column_name, c.data_type
+    from information_schema.columns c
+    where c.table_schema = 'public' and c.table_name = 'user_profiles_legacy'
+      and c.column_name in ('is_admin', 'admin', 'role', 'papel', 'perfil', 'tipo', 'user_role', 'cargo')
+  loop
+    if v_col.data_type = 'boolean' then
+      execute format(
+        'update public.user_profiles p set is_admin = true
+           from public.user_profiles_legacy l
+          where l.%I = p.user_id and l.%I is true',
+        v_id_col, v_col.column_name);
+    else
+      execute format(
+        'update public.user_profiles p set is_admin = true
+           from public.user_profiles_legacy l
+          where l.%I = p.user_id and lower(trim(l.%I::text)) in (''admin'', ''administrador'', ''administrator'')',
+        v_id_col, v_col.column_name);
+    end if;
+  end loop;
 end;
 $$;
 
@@ -382,3 +474,7 @@ commit;
 -- -----------------------------------------------------------------------------
 -- update public.user_profiles set is_admin = true, is_active = true
 -- where email = 'admin@suaempresa.com.br';
+--
+-- Se havia uma tabela user_profiles antiga, ela foi renomeada para public.user_profiles_legacy.
+-- Depois de conferir que os ADMINs estão certos, ela pode ser apagada:
+-- drop table public.user_profiles_legacy;

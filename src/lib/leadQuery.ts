@@ -157,13 +157,16 @@ export async function fetchLeadPage(
   sort: LeadSort,
   page: number,
   pageSize: number,
+  /** Cancela a consulta quando o usuário troca de filtro ou de página antes da resposta. */
+  signal?: AbortSignal,
 ): Promise<LeadPage> {
   const from = page * pageSize
-  const query = applyFilters(supabase.from('leads').select('*', { count: 'exact' }), filters)
+  let query = applyFilters(supabase.from('leads').select('*', { count: 'exact' }), filters)
     .order(sort.field, { ascending: sort.direction === 'asc', nullsFirst: false })
     // Desempate estável para a paginação não repetir/pular linhas
     .order('id', { ascending: true })
     .range(from, from + pageSize - 1)
+  if (signal) query = query.abortSignal(signal)
 
   const { data, error, count } = await query
   if (error) throw error

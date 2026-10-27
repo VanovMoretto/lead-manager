@@ -8,9 +8,6 @@ type ActionResult = { error: string | null }
 /** Domínio dos logins da equipe: quem digita só o usuário (ex.: nome.sobrenome) entra com este sufixo. */
 export const DEFAULT_EMAIL_DOMAIN = '@swanhoteis.com.br'
 
-/** Tamanho mínimo de senha exigido pelo app (o Supabase pode exigir mais). */
-export const MIN_PASSWORD_LENGTH = 8
-
 /** "Nome.Sobrenome " -> "nome.sobrenome@swanhoteis.com.br"; um e-mail completo é mantido como foi digitado. */
 function toLoginEmail(identifier: string): string {
   const value = identifier.trim().toLowerCase()
@@ -38,11 +35,12 @@ type AuthContextValue = {
   /** Chegou pelo link de "Esqueci minha senha" e ainda não definiu a nova senha. */
   passwordRecovery: boolean
   /** `identifier` é o usuário (sem domínio) ou um e-mail completo. */
-  signIn: (identifier: string, password: string, options?: { remember?: boolean }) => Promise<ActionResult>
+  signIn: (identifier: string, password: string, options?: { remember?: boolean; captchaToken?: string }) => Promise<ActionResult>
   signOut: () => Promise<void>
-  requestPasswordReset: (identifier: string) => Promise<ActionResult>
+  /** `captchaToken`: token do Turnstile, quando o captcha estiver ativo. */
+  requestPasswordReset: (identifier: string, captchaToken?: string) => Promise<ActionResult>
   /** Troca de senha no perfil: confirma a senha atual antes. */
-  changePassword: (currentPassword: string, newPassword: string) => Promise<ActionResult>
+  changePassword: (currentPassword: string, newPassword: string, captchaToken?: string) => Promise<ActionResult>
   /** Define a nova senha depois do link de recuperação. */
   completePasswordRecovery: (newPassword: string) => Promise<ActionResult>
 }
@@ -67,6 +65,9 @@ function translateAuthError(error: Pick<AuthError, 'message'> & { code?: string 
   }
   if (error.code === 'reauthentication_needed' || error.code === 'session_not_found' || error.code === 'session_expired') {
     return 'Sua sessão expirou. Entre novamente e tente de novo.'
+  }
+  if (normalized.includes('captcha')) {
+    return 'Confirme a verificação de segurança (captcha) e tente de novo.'
   }
   if (normalized.includes('too many requests') || normalized.includes('rate limit')) {
     return 'Muitas tentativas seguidas. Aguarde alguns instantes e tente novamente.'
@@ -160,12 +161,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const clearAccessNotice = useCallback(() => setAccessNotice(null), [])
 
   const signIn = useCallback(
-    async (identifier: string, password: string, options?: { remember?: boolean }): Promise<ActionResult> => {
+    async (identifier: string, password: string, options?: { remember?: boolean; captchaToken?: string }): Promise<ActionResult> => {
       setRememberSession(options?.remember ?? true)
       setAccessNotice(null)
       const { error } = await supabase.auth.signInWithPassword({
         email: toLoginEmail(identifier),
         password,
+        options: options?.captchaToken ? { captchaToken: options.captchaToken } : undefined,
       })
       return { error: error ? translateAuthError(error, 'Não foi possível entrar. Tente novamente.') : null }
     },
@@ -176,9 +178,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await supabase.auth.signOut()
   }, [])
 
-  const requestPasswordReset = useCallback(async (identifier: string): Promise<ActionResult> => {
+  const requestPasswordReset = useCallback(async (identifier: string, captchaToken?: string): Promise<ActionResult> => {
     const { error } = await supabase.auth.resetPasswordForEmail(toLoginEmail(identifier), {
       redirectTo: `${window.location.origin}${import.meta.env.BASE_URL}redefinir-senha`,
+      captchaToken,
     })
     return {
       error: error ? translateAuthError(error, 'Não foi possível enviar o link agora. Tente novamente mais tarde.') : null,
@@ -188,11 +191,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const userEmail = session?.user.email ?? null
 
   const changePassword = useCallback(
-    async (currentPassword: string, newPassword: string): Promise<ActionResult> => {
+    async (currentPassword: string, newPassword: string, captchaToken?: string): Promise<ActionResult> => {
       if (!userEmail) return { error: 'Sua sessão expirou. Entre novamente e tente de novo.' }
 
       // Confere a senha atual antes de trocar
-      const check = await supabase.auth.signInWithPassword({ email: userEmail, password: currentPassword })
+      const check = await supabase.auth.signInWithPassword({
+        email: userEmail,
+        password: currentPassword,
+        options: captchaToken ? { captchaToken } : undefined,
+      })
       if (check.error) {
         const invalid =
           check.error.code === 'invalid_credentials' || check.error.message.toLowerCase().includes('invalid login credentials')

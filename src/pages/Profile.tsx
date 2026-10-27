@@ -2,8 +2,12 @@ import { useRef, useState, type ChangeEvent, type FormEvent } from 'react'
 import { CircleAlert, CircleCheck, ImageUp, KeyRound, LoaderCircle, ShieldCheck, Trash2, UserRound } from 'lucide-react'
 import PageHeader from '../components/PageHeader'
 import PasswordInput from '../components/PasswordInput'
+import Turnstile, { type TurnstileHandle } from '../components/Turnstile'
+import { TURNSTILE_SITE_KEY } from '../lib/turnstile'
 import UserAvatar from '../components/UserAvatar'
-import { MIN_PASSWORD_LENGTH, useAuth } from '../contexts/AuthContext'
+import { useAuth } from '../contexts/AuthContext'
+import { PASSWORD_RULE_TEXT, validatePassword } from '../lib/password'
+import { RateLimitError, guardMutation } from '../lib/rateLimit'
 import { AVATAR_BUCKET } from '../hooks/useAvatarUrl'
 import { formatFileSize, randomStorageName, resolveMimeType, translateStorageError } from '../lib/storage'
 import { supabase } from '../lib/supabase'
@@ -60,6 +64,15 @@ function AvatarCard() {
       return
     }
 
+    try {
+      await guardMutation(`avatar:${user.id}`, () => uploadAvatar(file, mimeType))
+    } catch (error) {
+      if (error instanceof RateLimitError) setFeedback({ type: 'error', message: error.message })
+    }
+  }
+
+  const uploadAvatar = async (file: File, mimeType: string) => {
+    if (!user) return
     setBusy('upload')
     const path = `${user.id}/${randomStorageName(mimeType)}`
     const storage = supabase.storage.from(AVATAR_BUCKET)
@@ -180,6 +193,8 @@ function PasswordCard() {
   const [confirmation, setConfirmation] = useState('')
   const [saving, setSaving] = useState(false)
   const [feedback, setFeedback] = useState<Feedback>(null)
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null)
+  const turnstileRef = useRef<TurnstileHandle>(null)
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -189,8 +204,9 @@ function PasswordCard() {
       setFeedback({ type: 'error', message: 'Informe a senha atual.' })
       return
     }
-    if (next.length < MIN_PASSWORD_LENGTH) {
-      setFeedback({ type: 'error', message: `A nova senha precisa ter pelo menos ${MIN_PASSWORD_LENGTH} caracteres.` })
+    const passwordError = validatePassword(next)
+    if (passwordError) {
+      setFeedback({ type: 'error', message: passwordError })
       return
     }
     if (next !== confirmation) {
@@ -202,9 +218,15 @@ function PasswordCard() {
       return
     }
 
+    if (TURNSTILE_SITE_KEY && !captchaToken) {
+      setFeedback({ type: 'error', message: 'Confirme a verificação de segurança para alterar a senha.' })
+      return
+    }
+
     setSaving(true)
-    const result = await changePassword(current, next)
+    const result = await changePassword(current, next, captchaToken ?? undefined)
     setSaving(false)
+    turnstileRef.current?.reset()
 
     if (result.error) {
       setFeedback({ type: 'error', message: result.error })
@@ -245,7 +267,9 @@ function PasswordCard() {
             <PasswordInput id="confirm-password" value={confirmation} onChange={setConfirmation} autoComplete="new-password" disabled={saving} />
           </div>
         </div>
-        <p className="text-xs text-slate-500 dark:text-slate-400">Mínimo de {MIN_PASSWORD_LENGTH} caracteres.</p>
+        <p className="text-xs text-slate-500 dark:text-slate-400">{PASSWORD_RULE_TEXT}</p>
+
+        <Turnstile ref={turnstileRef} onToken={setCaptchaToken} />
 
         <FeedbackMessage feedback={feedback} />
 

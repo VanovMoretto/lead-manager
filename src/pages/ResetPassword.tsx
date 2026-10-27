@@ -1,7 +1,8 @@
 import { useState, type FormEvent } from 'react'
 import { Link, Navigate, useNavigate } from 'react-router-dom'
 import { CalendarHeart, CircleAlert, CircleCheck, KeyRound, LoaderCircle } from 'lucide-react'
-import { MIN_PASSWORD_LENGTH, useAuth } from '../contexts/AuthContext'
+import { useAuth } from '../contexts/AuthContext'
+import { PASSWORD_RULE_TEXT, validatePassword } from '../lib/password'
 import PasswordInput from '../components/PasswordInput'
 import ThemeToggle from '../components/ThemeToggle'
 import { cn } from '../lib/utils'
@@ -26,8 +27,9 @@ export default function ResetPassword() {
     event.preventDefault()
     setError(null)
 
-    if (password.length < MIN_PASSWORD_LENGTH) {
-      setError(`A nova senha precisa ter pelo menos ${MIN_PASSWORD_LENGTH} caracteres.`)
+    const passwordError = validatePassword(password)
+    if (passwordError) {
+      setError(passwordError)
       return
     }
     if (password !== confirmation) {
@@ -104,13 +106,13 @@ export default function ResetPassword() {
           ) : (
             <form onSubmit={handleSubmit} className="mt-6 space-y-5" noValidate>
               <p className="text-sm text-slate-500 dark:text-slate-400">
-                Escolha uma senha com pelo menos {MIN_PASSWORD_LENGTH} caracteres.
+                {PASSWORD_RULE_TEXT}
               </p>
               <div>
                 <label htmlFor="new-password" className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">
                   Nova senha
                 </label>
-                <PasswordInput id="new-password" value={password} onChange={setPassword} autoComplete="new-password" disabled={saving} />
+                <PasswordInput id="new-password" name="new-password" value={password} onChange={setPassword} autoComplete="new-password" disabled={saving} />
               </div>
               <div>
                 <label htmlFor="confirm-password" className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">

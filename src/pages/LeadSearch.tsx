@@ -254,7 +254,8 @@ export default function LeadSearch() {
   useEffect(() => {
     if (dateRangeInvalid) return
     let isActive = true
-    fetchLeadPage(filters, sort, page, pageSize)
+    const controller = new AbortController()
+    fetchLeadPage(filters, sort, page, pageSize, controller.signal)
       .then((data) => {
         if (isActive) setResult({ key: queryKey, data, error: null })
       })
@@ -265,6 +266,7 @@ export default function LeadSearch() {
       })
     return () => {
       isActive = false
+      controller.abort()
     }
   }, [queryKey, dateRangeInvalid, filters, sort, page, pageSize])
 

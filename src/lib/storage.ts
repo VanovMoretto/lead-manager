@@ -2,6 +2,8 @@
 
 const EXTENSION_BY_MIME: Record<string, string> = {
   'application/pdf': 'pdf',
+  'application/msword': 'doc',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
   'image/png': 'png',
   'image/jpeg': 'jpg',
   'image/webp': 'webp',

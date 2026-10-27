@@ -17,6 +17,7 @@ import PageHeader from '../components/PageHeader'
 import ToggleSwitch from '../components/ToggleSwitch'
 import UserManagement from '../components/UserManagement'
 import { supabase } from '../lib/supabase'
+import { RateLimitError, guardMutation } from '../lib/rateLimit'
 import { cn } from '../lib/utils'
 import {
   LOSS_REASON_OTHER,
@@ -290,7 +291,15 @@ export default function AdminPanel() {
   }, [state.options])
 
   const handleAdd = async (category: SettingCategory, label: string): Promise<string | null> => {
-    const { data, error } = await supabase.from('app_settings_options').insert({ category, label }).select().single()
+    let response
+    try {
+      response = await guardMutation(`option:add:${category}:${label.toLocaleLowerCase('pt-BR')}`, async () =>
+        supabase.from('app_settings_options').insert({ category, label }).select().single(),
+      )
+    } catch (error) {
+      return error instanceof RateLimitError ? error.message : 'Não foi possível salvar. Tente novamente.'
+    }
+    const { data, error } = response
     if (error) return translateError(error)
     setState((current) => ({ ...current, options: [...current.options, data] }))
     return null
@@ -305,8 +314,17 @@ export default function AdminPanel() {
         options: current.options.map((item) => (item.id === option.id ? { ...item, active } : item)),
       }))
 
-    applyActive(nextActive)
-    const { error } = await supabase.from('app_settings_options').update({ active: nextActive }).eq('id', option.id)
+    let response
+    try {
+      // Liga/desliga a mesma opção no máximo uma vez a cada 1,5 s
+      response = await guardMutation(`option:toggle:${option.id}`, async () => {
+        applyActive(nextActive)
+        return supabase.from('app_settings_options').update({ active: nextActive }).eq('id', option.id)
+      })
+    } catch (error) {
+      return error instanceof RateLimitError ? error.message : 'Não foi possível salvar. Tente novamente.'
+    }
+    const { error } = response
     if (error) {
       applyActive(option.active)
       return translateError(error)

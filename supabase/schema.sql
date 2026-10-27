@@ -388,6 +388,38 @@ create trigger leads_set_updated_at
 -- Os usuários continuam sendo criados no Supabase (Authentication → Users);
 -- o perfil nasce sozinho pelo trigger em auth.users.
 -- -----------------------------------------------------------------------------
+-- Tabela user_profiles de antes desta migração, sem a coluna user_id (estrutura diferente):
+-- é preservada como user_profiles_legacy e os ADMINs dela são copiados mais abaixo
+do $$
+declare
+  v_trigger record;
+begin
+  if to_regclass('public.user_profiles') is not null and not exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'user_profiles' and column_name = 'user_id'
+  ) then
+    if to_regclass('public.user_profiles_legacy') is not null then
+      raise exception 'Já existem public.user_profiles (sem user_id) e public.user_profiles_legacy. Remova ou renomeie uma delas e rode de novo.';
+    end if;
+    alter table public.user_profiles rename to user_profiles_legacy;
+
+    -- Triggers antigos em auth.users que gravavam na tabela antiga passariam a gravar na nova
+    -- (com outras colunas) e travariam a criação de usuários: o trigger desta migração os substitui
+    for v_trigger in
+      select t.tgname
+      from pg_trigger t
+      join pg_proc p on p.oid = t.tgfoid
+      where t.tgrelid = 'auth.users'::regclass
+        and not t.tgisinternal
+        and t.tgname <> 'on_auth_user_sync_profile'
+        and p.prosrc ilike '%user_profiles%'
+    loop
+      execute format('drop trigger %I on auth.users', v_trigger.tgname);
+    end loop;
+  end if;
+end;
+$$;
+
 create table if not exists public.user_profiles (
   user_id          uuid primary key references auth.users (id) on delete cascade,
   email            text,
@@ -401,6 +433,20 @@ create table if not exists public.user_profiles (
   constraint user_profiles_avatar_path_own_folder
     check (avatar_path is null or avatar_path like user_id::text || '/%')
 );
+
+-- Tabela user_profiles antiga que já usava user_id: completa as colunas que faltarem
+alter table public.user_profiles add column if not exists email           text;
+alter table public.user_profiles add column if not exists is_admin        boolean not null default false;
+alter table public.user_profiles add column if not exists is_active       boolean not null default true;
+alter table public.user_profiles add column if not exists avatar_path     text;
+alter table public.user_profiles add column if not exists last_sign_in_at timestamptz;
+alter table public.user_profiles add column if not exists created_at      timestamptz not null default now();
+
+create unique index if not exists user_profiles_user_id_key on public.user_profiles (user_id);
+
+alter table public.user_profiles drop constraint if exists user_profiles_avatar_path_own_folder;
+alter table public.user_profiles add  constraint user_profiles_avatar_path_own_folder
+  check (avatar_path is null or avatar_path like user_id::text || '/%');
 
 comment on table  public.user_profiles             is 'Perfil de cada usuário do Supabase Auth: acesso ativo, papel ADMIN e avatar.';
 comment on column public.user_profiles.is_admin    is 'ADMIN: Painel Admin, gestão de usuários e exclusões.';
@@ -446,6 +492,52 @@ begin
     execute 'update public.user_profiles p set is_admin = true
              where exists (select 1 from public.app_admins a where a.user_id = p.user_id)';
   end if;
+end;
+$$;
+
+-- ADMINs marcados na tabela user_profiles antiga (is_admin = true ou papel "admin")
+do $$
+declare
+  v_id_col text;
+  v_col record;
+begin
+  if to_regclass('public.user_profiles_legacy') is null then
+    return;
+  end if;
+
+  -- Coluna com o id do usuário do Supabase Auth
+  select c.column_name into v_id_col
+  from information_schema.columns c
+  where c.table_schema = 'public' and c.table_name = 'user_profiles_legacy'
+    and c.data_type = 'uuid' and c.column_name in ('user_id', 'id', 'auth_id', 'uid', 'profile_id')
+  order by array_position(array['user_id', 'id', 'auth_id', 'uid', 'profile_id'], c.column_name::text)
+  limit 1;
+
+  if v_id_col is null then
+    raise notice 'user_profiles_legacy sem coluna de id do usuário: defina os ADMINs no Painel Admin ou pelo SQL do fim do arquivo.';
+    return;
+  end if;
+
+  for v_col in
+    select c.column_name, c.data_type
+    from information_schema.columns c
+    where c.table_schema = 'public' and c.table_name = 'user_profiles_legacy'
+      and c.column_name in ('is_admin', 'admin', 'role', 'papel', 'perfil', 'tipo', 'user_role', 'cargo')
+  loop
+    if v_col.data_type = 'boolean' then
+      execute format(
+        'update public.user_profiles p set is_admin = true
+           from public.user_profiles_legacy l
+          where l.%I = p.user_id and l.%I is true',
+        v_id_col, v_col.column_name);
+    else
+      execute format(
+        'update public.user_profiles p set is_admin = true
+           from public.user_profiles_legacy l
+          where l.%I = p.user_id and lower(trim(l.%I::text)) in (''admin'', ''administrador'', ''administrator'')',
+        v_id_col, v_col.column_name);
+    end if;
+  end loop;
 end;
 $$;
 
@@ -775,6 +867,111 @@ create policy "Avatares: exclusão"
     bucket_id = 'avatars'
     and (storage.foldername(name))[1] = (select auth.uid())::text
   );
+
+
+-- -----------------------------------------------------------------------------
+-- Segurança: limite de escrita e tamanho dos campos
+-- -----------------------------------------------------------------------------
+create or replace function public.enforce_lead_rate_limit()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_uid uuid := (select auth.uid());
+  v_recent integer;
+begin
+  -- Scripts do SQL Editor e seeds (sem usuário logado) não entram no limite
+  if v_uid is null then
+    return new;
+  end if;
+
+  -- Responsável é sempre quem está logado
+  new.user_id := v_uid;
+
+  -- Serializa as inserções do mesmo usuário para a contagem não ser burlada em paralelo
+  perform pg_advisory_xact_lock(hashtextextended(v_uid::text, 0));
+
+  select count(*) into v_recent
+  from public.leads l
+  where l.user_id = v_uid
+    and l.created_at > now() - interval '1 minute';
+
+  if v_recent >= 20 then
+    raise exception 'Limite de requisições excedido. Aguarde um instante.'
+      using errcode = 'P0001', hint = 'lead_rate_limit';
+  end if;
+
+  return new;
+end;
+$$;
+
+revoke execute on function public.enforce_lead_rate_limit() from public, anon, authenticated;
+
+drop trigger if exists leads_enforce_rate_limit on public.leads;
+create trigger leads_enforce_rate_limit
+  before insert on public.leads
+  for each row execute function public.enforce_lead_rate_limit();
+
+create index if not exists leads_user_id_created_at_idx on public.leads (user_id, created_at desc);
+
+-- -----------------------------------------------------------------------------
+-- Tamanho máximo dos campos de texto
+-- -----------------------------------------------------------------------------
+alter table public.leads drop constraint if exists leads_text_lengths;
+alter table public.leads add  constraint leads_text_lengths check (
+  length(contact_name) <= 150
+  and (contact_phone is null or length(contact_phone) <= 30)
+  and (contact_email is null or length(contact_email) <= 254)
+  and (company is null or length(company) <= 150)
+  and (origin is null or length(origin) <= 100)
+  and (room_interest is null or length(room_interest) <= 2000)
+  and cardinality(room_interests) <= 30
+  and (date_notes is null or length(date_notes) <= 200)
+  and (proposal_number is null or length(proposal_number) <= 50)
+  and (loss_reason is null or length(loss_reason) <= 200)
+  and (loss_reason_details is null or length(loss_reason_details) <= 2000)
+) not valid;
+
+alter table public.app_settings_options drop constraint if exists app_settings_options_label_length;
+alter table public.app_settings_options add  constraint app_settings_options_label_length
+  check (length(label) <= 80) not valid;
+
+alter table public.user_profiles drop constraint if exists user_profiles_avatar_path_length;
+alter table public.user_profiles add  constraint user_profiles_avatar_path_length
+  check (avatar_path is null or length(avatar_path) <= 200) not valid;
+
+-- -----------------------------------------------------------------------------
+-- Anexos de proposta: PDF, DOC, DOCX, PNG e JPG (extensão e tipo), até 10 MB
+-- -----------------------------------------------------------------------------
+update storage.buckets
+   set file_size_limit = 10485760,
+       allowed_mime_types = array[
+         'application/pdf',
+         'application/msword',
+         'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+         'image/png',
+         'image/jpeg'
+       ]
+ where id = 'lead-attachments';
+
+alter table public.lead_attachments drop constraint if exists lead_attachments_mime_type_check;
+alter table public.lead_attachments add  constraint lead_attachments_mime_type_check check (
+  mime_type in (
+    'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'image/png',
+    'image/jpeg'
+  )
+) not valid;
+
+alter table public.lead_attachments drop constraint if exists lead_attachments_extension_check;
+alter table public.lead_attachments add  constraint lead_attachments_extension_check check (
+  lower(file_name) ~ '\.(pdf|doc|docx|png|jpg|jpeg)$'
+  and lower(storage_path) ~ '\.(pdf|doc|docx|png|jpg)$'
+) not valid;
 
 
 -- -----------------------------------------------------------------------------

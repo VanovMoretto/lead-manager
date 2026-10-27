@@ -3,6 +3,7 @@ import { CircleAlert, Info, RefreshCw, Search, ShieldCheck, UserCheck, Users } f
 import type { PostgrestError } from '@supabase/supabase-js'
 import { DEFAULT_EMAIL_DOMAIN, useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
+import { RateLimitError, guardMutation } from '../lib/rateLimit'
 import { cn } from '../lib/utils'
 import type { UserProfile } from '../types/lead'
 import ToggleSwitch from './ToggleSwitch'
@@ -83,15 +84,26 @@ export default function UserManagement() {
 
     setSavingId(profile.user_id)
     setActionError(null)
-    // Atualização otimista: desfaz se o banco recusar
-    apply({ ...profile, ...change })
-    const { data, error } = await supabase
-      .rpc('admin_set_user_access', {
-        p_user_id: profile.user_id,
-        ...(change.is_admin !== undefined && { p_is_admin: change.is_admin }),
-        ...(change.is_active !== undefined && { p_is_active: change.is_active }),
+    let response
+    try {
+      // Uma alteração por usuário a cada 1,5 s
+      response = await guardMutation(`user:access:${profile.user_id}`, async () => {
+        // Atualização otimista: desfaz se o banco recusar
+        apply({ ...profile, ...change })
+        return supabase
+          .rpc('admin_set_user_access', {
+            p_user_id: profile.user_id,
+            ...(change.is_admin !== undefined && { p_is_admin: change.is_admin }),
+            ...(change.is_active !== undefined && { p_is_active: change.is_active }),
+          })
+          .single()
       })
-      .single()
+    } catch (guardError) {
+      setSavingId(null)
+      setActionError(guardError instanceof RateLimitError ? guardError.message : 'Não foi possível salvar a alteração. Tente novamente.')
+      return
+    }
+    const { data, error } = response
     setSavingId(null)
 
     if (error || !data) {

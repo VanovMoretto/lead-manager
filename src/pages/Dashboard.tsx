@@ -143,7 +143,7 @@ function daysSince(timestamp: string): number {
 const PAGE_SIZE = 1000
 
 /** Busca todos os leads do período, paginando (o Supabase devolve no máximo 1000 linhas por vez). */
-async function fetchLeadsInRange(range: DateRange): Promise<DashboardLead[]> {
+async function fetchLeadsInRange(range: DateRange, signal: AbortSignal): Promise<DashboardLead[]> {
   const { gte, lt } = rangeToTimestampBounds(range)
   const rows: DashboardLead[] = []
 
@@ -155,6 +155,7 @@ async function fetchLeadsInRange(range: DateRange): Promise<DashboardLead[]> {
       .lt('created_at', lt)
       .order('created_at', { ascending: true })
       .range(offset, offset + PAGE_SIZE - 1)
+      .abortSignal(signal)
 
     if (error) throw error
     rows.push(...((data ?? []) as DashboardLead[]))
@@ -166,13 +167,14 @@ async function fetchLeadsInRange(range: DateRange): Promise<DashboardLead[]> {
 
 const FOLLOW_UP_LIMIT = 8
 
-async function fetchOpenLeads(): Promise<Lead[]> {
+async function fetchOpenLeads(signal: AbortSignal): Promise<Lead[]> {
   const { data, error } = await supabase
     .from('leads')
     .select('*')
     .eq('status', 'em_aberto')
     .order('created_at', { ascending: false })
     .limit(FOLLOW_UP_LIMIT)
+    .abortSignal(signal)
 
   if (error) throw error
   return data ?? []
@@ -983,7 +985,8 @@ export default function Dashboard() {
   useEffect(() => {
     if (customRangeError) return
     let isActive = true
-    fetchLeadsInRange(range)
+    const controller = new AbortController()
+    fetchLeadsInRange(range, controller.signal)
       .then((data) => {
         if (isActive) setPeriodResult({ key: periodKey, data, error: null })
       })
@@ -992,6 +995,7 @@ export default function Dashboard() {
       })
     return () => {
       isActive = false
+      controller.abort()
     }
   }, [periodKey, range, customRangeError])
 
@@ -1001,7 +1005,8 @@ export default function Dashboard() {
 
   useEffect(() => {
     let isActive = true
-    fetchOpenLeads()
+    const controller = new AbortController()
+    fetchOpenLeads(controller.signal)
       .then((data) => {
         if (isActive) setFollowUpResult({ key: followUpKey, data, error: null })
       })
@@ -1010,6 +1015,7 @@ export default function Dashboard() {
       })
     return () => {
       isActive = false
+      controller.abort()
     }
   }, [followUpKey])
 
