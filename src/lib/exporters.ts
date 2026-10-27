@@ -1,5 +1,5 @@
 /**
- * Exportações da Consulta de Leads (Excel, CSV de mailing e PDF).
+ * Exportações da Consulta de Propostas (Excel, CSV de mailing e PDF) e da planilha de Faturamento.
  * Este módulo é carregado sob demanda (import dinâmico), para que xlsx e jsPDF
  * só sejam baixados quando alguém clicar em exportar.
  */
@@ -8,9 +8,17 @@ import { jsPDF } from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { formatBRL, formatDateBR, formatPhoneBR } from './format'
 import { toLocalISODate } from './dashboard'
-import { formatLeadEventPeriod, formatLeadRooms, getLeadValues, hasAnyValue, type LeadValueBreakdown } from './leadFields'
+import { NET_RATES, formatLeadEventPeriod, formatLeadRooms, getLeadValues, hasAnyValue, sumLeadValues } from './leadFields'
+import { formatEventDays, netShare, revenueSituation, type RevenueLead } from './revenue'
 import { normalizeEmail, normalizePhoneDigits } from './contactIdentity'
-import { LEAD_STATUS_LABELS, type Lead, type MarketingSuppression } from '../types/lead'
+import {
+  LEAD_STATUS_LABELS,
+  OPERATIONAL_STATUS_LABELS,
+  PAYMENT_STATUS_LABELS,
+  SURVEY_STATUS_LABELS,
+  type Lead,
+  type MarketingSuppression,
+} from '../types/lead'
 
 // =============================================================================
 // Utilitários
@@ -66,20 +74,7 @@ function sanitizeRow<T extends string | number | null>(row: T[]): T[] {
 }
 
 /** Soma os componentes de valor de uma lista de leads. */
-function sumValues(leads: Lead[]): LeadValueBreakdown {
-  return leads.reduce<LeadValueBreakdown>(
-    (sum, lead) => {
-      const values = getLeadValues(lead)
-      return {
-        rental: sum.rental + values.rental,
-        ab: sum.ab + values.ab,
-        lodging: sum.lodging + values.lodging,
-        total: sum.total + values.total,
-      }
-    },
-    { rental: 0, ab: 0, lodging: 0, total: 0 },
-  )
-}
+const sumValues = sumLeadValues
 
 // =============================================================================
 // 1. Excel completo (.xlsx)
@@ -104,7 +99,10 @@ export function exportLeadsToXlsx(leads: Lead[]): void {
     'Locação / Espaço (R$)',
     'A&B (R$)',
     'Hospedagem (R$)',
-    'Receita Total (R$)',
+    'Equipamentos / Extras (R$)',
+    'Estacionamento (R$)',
+    'Receita Bruta Total (R$)',
+    'Receita Líquida Total (R$)',
     'Proposta enviada',
     'Nº da proposta',
     'Situação',
@@ -114,8 +112,8 @@ export function exportLeadsToXlsx(leads: Lead[]): void {
     'Observações',
   ]
   const dateColumn = 0
-  // Colunas numéricas de valor (L, M, N, O)
-  const valueColumns = [11, 12, 13, 14]
+  // Colunas numéricas de valor (L a R)
+  const valueColumns = [11, 12, 13, 14, 15, 16, 17]
 
   const rows: Array<Array<string | number | null>> = leads.map((lead) => {
     const values = getLeadValues(lead)
@@ -135,7 +133,10 @@ export function exportLeadsToXlsx(leads: Lead[]): void {
       lead.proposed_value ?? null,
       values.ab,
       values.lodging,
+      values.equipment,
+      values.parking,
       hasAnyValue(lead) ? values.total : null,
+      hasAnyValue(lead) ? values.net : null,
       yesNo(lead.proposal_sent || lead.status === 'fechado'),
       lead.proposal_number ?? '',
       LEAD_STATUS_LABELS[lead.status],
@@ -381,7 +382,7 @@ const SLATE_500: [number, number, number] = [100, 116, 139]
 const SLATE_900: [number, number, number] = [15, 23, 42]
 
 /** Índice da coluna "Situação" na tabela do PDF (colorida por status). */
-const PDF_STATUS_COLUMN = 10
+const PDF_STATUS_COLUMN = 12
 
 /** `filterLabels`: descrição dos filtros aplicados (`describeFilters`). */
 export function exportLeadsToPdf(leads: Lead[], filterLabels: string[]): void {
@@ -451,14 +452,16 @@ export function exportLeadsToPdf(leads: Lead[], filterLabels: string[]): void {
     ['Fechados', String(closed.length)],
     ['Perdidos', String(lost)],
     ['Conversão', conversion],
-    ['Receita total orçada', formatBRL(allValues.total)],
+    ['Receita bruta orçada', formatBRL(allValues.total)],
   ])
   drawBoxes(
     [
-      ['Fechado | Locação', formatBRL(closedValues.rental)],
+      ['Fechado | Locação de sala', formatBRL(closedValues.rental)],
       ['Fechado | A&B', formatBRL(closedValues.ab)],
       ['Fechado | Hospedagem', formatBRL(closedValues.lodging)],
-      ['Receita total fechada', formatBRL(closedValues.total)],
+      ['Fechado | Equip. + Estac.', formatBRL(closedValues.equipment + closedValues.parking)],
+      ['Receita líquida total', formatBRL(closedValues.net)],
+      ['Receita bruta fechada', formatBRL(closedValues.total)],
     ],
     true,
   )
@@ -479,8 +482,10 @@ export function exportLeadsToPdf(leads: Lead[], filterLabels: string[]): void {
         'Evento',
         'Locação',
         'A&B',
-        'Hospedagem',
-        'Receita Total',
+        'Hosp.',
+        'Equip. + Estac.',
+        'Bruta total',
+        'Líquida total',
         'Proposta',
         'Situação',
         'Motivo de perda',
@@ -497,7 +502,9 @@ export function exportLeadsToPdf(leads: Lead[], filterLabels: string[]): void {
         money(values.rental, lead.proposed_value !== null),
         money(values.ab, lead.has_ab || values.ab > 0),
         money(values.lodging, lead.has_lodging || values.lodging > 0),
+        money(values.equipment + values.parking, values.equipment + values.parking > 0),
         money(values.total, hasAnyValue(lead)),
+        money(values.net, hasAnyValue(lead)),
         lead.proposal_sent || lead.status === 'fechado' ? lead.proposal_number || 'Enviada' : 'Sondagem',
         LEAD_STATUS_LABELS[lead.status],
         lead.status === 'perdido' ? [lead.loss_reason, lead.loss_reason_details].filter(Boolean).join(': ') : '',
@@ -516,7 +523,9 @@ export function exportLeadsToPdf(leads: Lead[], filterLabels: string[]): void {
               formatBRL(allValues.rental),
               formatBRL(allValues.ab),
               formatBRL(allValues.lodging),
+              formatBRL(allValues.equipment + allValues.parking),
               formatBRL(allValues.total),
+              formatBRL(allValues.net),
               '',
               '',
               '',
@@ -530,21 +539,23 @@ export function exportLeadsToPdf(leads: Lead[], filterLabels: string[]): void {
     alternateRowStyles: { fillColor: [248, 250, 252] },
     // Larguras em mm (A4 paisagem: 273 mm úteis). Valores com espaço para "R$ 999.999,99" sem quebrar.
     columnStyles: {
-      0: { cellWidth: 18 },
-      1: { cellWidth: 26, fontStyle: 'bold' },
-      2: { cellWidth: 31 },
-      3: { cellWidth: 30 },
-      4: { cellWidth: 18 },
-      5: { cellWidth: 23, halign: 'right' },
-      6: { cellWidth: 23, halign: 'right' },
-      7: { cellWidth: 23, halign: 'right' },
-      8: { cellWidth: 24, halign: 'right', fontStyle: 'bold' },
-      9: { cellWidth: 16 },
-      10: { cellWidth: 15 },
+      0: { cellWidth: 17 },
+      1: { cellWidth: 25, fontStyle: 'bold' },
+      2: { cellWidth: 27 },
+      3: { cellWidth: 24 },
+      4: { cellWidth: 17 },
+      5: { cellWidth: 19, halign: 'right' },
+      6: { cellWidth: 18, halign: 'right' },
+      7: { cellWidth: 18, halign: 'right' },
+      8: { cellWidth: 18, halign: 'right' },
+      9: { cellWidth: 21, halign: 'right', fontStyle: 'bold' },
+      10: { cellWidth: 20, halign: 'right' },
+      11: { cellWidth: 15 },
+      12: { cellWidth: 14 },
     },
     didParseCell: (data) => {
       // Valores alinhados à direita também no rodapé de totais
-      if (data.section === 'foot' && data.column.index >= 5 && data.column.index <= 8) {
+      if (data.section === 'foot' && data.column.index >= 5 && data.column.index <= 10) {
         data.cell.styles.halign = 'right'
       }
       // Situação colorida (texto, sem depender de fundo)
@@ -572,4 +583,291 @@ export function exportLeadsToPdf(leads: Lead[], filterLabels: string[]): void {
   }
 
   doc.save(`relatorio-leads_${timestampForFilename()}.pdf`)
+}
+
+// =============================================================================
+// 4. Planilha de Faturamento & Eventos (.xlsx e .pdf)
+// =============================================================================
+
+const REVENUE_HEADER = [
+  'Data',
+  'Evento',
+  'Empresa / Contato',
+  'Origem',
+  'Local',
+  'PAX',
+  'Situação',
+  'Locação de sala',
+  'Extras / Equip. (100%)',
+  'Extras 15%',
+  'A&B (100%)',
+  'A&B 6%',
+  'Hospedagem (100%)',
+  'Estacionamento (100%)',
+  'Estac. 50%',
+  'NF Locação',
+  'NF A&B',
+  'NF Estac.',
+  'Pagamento',
+  'Faturamento Bruto',
+  'Faturamento Líquido',
+  'Nº Proposta',
+  'Pesquisa',
+]
+
+/** Colunas de valor da planilha de faturamento (índices em REVENUE_HEADER). */
+const REVENUE_VALUE_COLUMNS = [7, 8, 9, 10, 11, 12, 13, 14, 19, 20]
+
+function revenueRow(lead: RevenueLead): Array<string | number | null> {
+  const values = getLeadValues(lead)
+  return sanitizeRow<string | number | null>([
+    formatEventDays(lead),
+    lead.event_name ?? '',
+    [lead.company, lead.contact_name].filter(Boolean).join(' · '),
+    lead.origin ?? '',
+    formatLeadRooms(lead, ', '),
+    lead.pax ?? null,
+    OPERATIONAL_STATUS_LABELS[revenueSituation(lead)],
+    values.rental,
+    values.equipment,
+    netShare(values.equipment, NET_RATES.equipment),
+    values.ab,
+    netShare(values.ab, NET_RATES.ab),
+    values.lodging,
+    values.parking,
+    netShare(values.parking, NET_RATES.parking),
+    lead.nf_rental ?? '',
+    lead.nf_ab ?? '',
+    lead.nf_parking ?? '',
+    PAYMENT_STATUS_LABELS[lead.payment_status],
+    values.total,
+    values.net,
+    lead.proposal_number ?? '',
+    SURVEY_STATUS_LABELS[lead.survey_status],
+  ])
+}
+
+/** As três linhas de fechamento: faturamento bruto, faturamento líquido e a locação de salas isolada. */
+function revenueTotals(leads: RevenueLead[]) {
+  const gross = sumLeadValues(leads)
+  const metaConfirmed = leads
+    .filter((lead) => lead.status === 'fechado')
+    .reduce((sum, lead) => sum + Number(lead.proposed_value ?? 0), 0)
+  return {
+    gross,
+    net: {
+      rental: gross.rental,
+      equipment: netShare(gross.equipment, NET_RATES.equipment),
+      ab: netShare(gross.ab, NET_RATES.ab),
+      lodging: gross.lodging,
+      parking: netShare(gross.parking, NET_RATES.parking),
+      total: gross.net,
+    },
+    metaConfirmed,
+    metaPending: gross.rental - metaConfirmed,
+  }
+}
+
+export function exportRevenueToXlsx(leads: RevenueLead[], periodLabel: string): void {
+  const rows = leads.map(revenueRow)
+  const totals = revenueTotals(leads)
+  const blank = () => REVENUE_HEADER.map(() => null as string | number | null)
+
+  const grossRow = blank()
+  grossRow[0] = 'FATURAMENTO BRUTO'
+  grossRow[7] = totals.gross.rental
+  grossRow[8] = totals.gross.equipment
+  grossRow[10] = totals.gross.ab
+  grossRow[12] = totals.gross.lodging
+  grossRow[13] = totals.gross.parking
+  grossRow[19] = totals.gross.total
+
+  const netRow = blank()
+  netRow[0] = 'FATURAMENTO LÍQUIDO'
+  netRow[7] = totals.net.rental
+  netRow[9] = totals.net.equipment
+  netRow[11] = totals.net.ab
+  netRow[12] = totals.net.lodging
+  netRow[14] = totals.net.parking
+  netRow[20] = totals.net.total
+
+  const metaRow = blank()
+  metaRow[0] = 'TOTAL LOCAÇÃO DE SALAS'
+  metaRow[7] = totals.metaConfirmed
+  metaRow[8] = `À confirmar: ${formatBRL(totals.metaPending)}`
+
+  const title = [`Faturamento & Eventos · ${periodLabel}`]
+  const sheet = XLSX.utils.aoa_to_sheet([title, REVENUE_HEADER, ...rows, blank(), grossRow, netRow, metaRow])
+  const firstDataRow = 2
+  const lastRow = firstDataRow + rows.length + 3
+  for (let rowIndex = firstDataRow; rowIndex <= lastRow; rowIndex += 1) {
+    for (const column of REVENUE_VALUE_COLUMNS) {
+      const cell = sheet[XLSX.utils.encode_cell({ r: rowIndex, c: column })]
+      if (cell && typeof cell.v === 'number') cell.z = CURRENCY_FORMAT
+    }
+  }
+  sheet['!cols'] = REVENUE_HEADER.map((header, index) => ({
+    wch: index === 0 ? 14 : index === 1 || index === 2 ? 28 : Math.max(header.length + 2, 12),
+  }))
+  sheet['!autofilter'] = {
+    ref: XLSX.utils.encode_range({ s: { r: 1, c: 0 }, e: { r: firstDataRow + rows.length - 1, c: REVENUE_HEADER.length - 1 } }),
+  }
+
+  const workbook = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(workbook, sheet, 'Faturamento')
+  XLSX.writeFile(workbook, `faturamento_${timestampForFilename()}.xlsx`, { compression: true })
+}
+
+export function exportRevenueToPdf(leads: RevenueLead[], periodLabel: string): void {
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
+  const pageWidth = doc.internal.pageSize.getWidth()
+  const pageHeight = doc.internal.pageSize.getHeight()
+  const margin = 10
+  const totals = revenueTotals(leads)
+
+  doc.setFillColor(...BRAND_900)
+  doc.rect(0, 0, pageWidth, 20, 'F')
+  doc.setTextColor(255, 255, 255)
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(15)
+  doc.text(`Faturamento & Eventos · ${periodLabel}`, margin, 13)
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(9)
+  doc.text(`Gerado em ${new Date().toLocaleString('pt-BR')}`, pageWidth - margin, 13, { align: 'right' })
+
+  const money = (value: number) => (value === 0 ? '-' : formatBRL(value))
+  const withShare = (value: number, rate: number) =>
+    value === 0 ? '-' : `${formatBRL(value)}\n${Math.round(rate * 100)}%: ${formatBRL(netShare(value, rate))}`
+
+  autoTable(doc, {
+    startY: 26,
+    margin: { left: margin, right: margin, bottom: 14 },
+    head: [
+      [
+        'Data',
+        'Evento',
+        'PAX',
+        'Situação',
+        'Locação de sala',
+        'Equip. / Extras',
+        'A&B',
+        'Hosp.',
+        'Estac.',
+        'NFs Loc / A&B / Estac',
+        'Pagto',
+        'Faturamento bruto',
+        'Faturamento líquido',
+        'Proposta',
+      ],
+    ],
+    body: leads.map((lead) => {
+      const values = getLeadValues(lead)
+      return [
+        formatEventDays(lead),
+        `${lead.event_name || 'Evento sem nome'}\n${[lead.company, lead.contact_name].filter(Boolean).join(' · ')}`,
+        lead.pax === null ? '-' : String(lead.pax),
+        OPERATIONAL_STATUS_LABELS[revenueSituation(lead)],
+        money(values.rental),
+        withShare(values.equipment, NET_RATES.equipment),
+        withShare(values.ab, NET_RATES.ab),
+        money(values.lodging),
+        withShare(values.parking, NET_RATES.parking),
+        [lead.nf_rental, lead.nf_ab, lead.nf_parking].map((nf) => nf || '-').join(' / '),
+        PAYMENT_STATUS_LABELS[lead.payment_status],
+        money(values.total),
+        money(values.net),
+        lead.proposal_number || '-',
+      ]
+    }),
+    foot:
+      leads.length > 0
+        ? [
+            [
+              'FATURAMENTO BRUTO',
+              `${leads.length} eventos`,
+              '',
+              '',
+              formatBRL(totals.gross.rental),
+              formatBRL(totals.gross.equipment),
+              formatBRL(totals.gross.ab),
+              formatBRL(totals.gross.lodging),
+              formatBRL(totals.gross.parking),
+              '',
+              '',
+              formatBRL(totals.gross.total),
+              '',
+              '',
+            ],
+            [
+              'FATURAMENTO LÍQUIDO',
+              '',
+              '',
+              '',
+              formatBRL(totals.net.rental),
+              formatBRL(totals.net.equipment),
+              formatBRL(totals.net.ab),
+              formatBRL(totals.net.lodging),
+              formatBRL(totals.net.parking),
+              '',
+              '',
+              '',
+              formatBRL(totals.net.total),
+              '',
+            ],
+            [
+              'TOTAL LOCAÇÃO DE SALAS',
+              'Confirmado / Realizado',
+              '',
+              '',
+              formatBRL(totals.metaConfirmed),
+              `À confirmar: ${formatBRL(totals.metaPending)}`,
+              '',
+              '',
+              '',
+              '',
+              '',
+              '',
+              '',
+              '',
+            ],
+          ]
+        : undefined,
+    showFoot: 'lastPage',
+    styles: { font: 'helvetica', fontSize: 7, cellPadding: 1.6, textColor: SLATE_900, lineColor: [226, 232, 240], lineWidth: 0.1 },
+    headStyles: { fillColor: BRAND_600, textColor: 255, fontStyle: 'bold' },
+    footStyles: { fillColor: BRAND_50, textColor: BRAND_900, fontStyle: 'bold' },
+    alternateRowStyles: { fillColor: [248, 250, 252] },
+    // A4 paisagem: 277 mm úteis com margem de 10 mm
+    columnStyles: {
+      0: { cellWidth: 17 },
+      1: { cellWidth: 42, fontStyle: 'bold' },
+      2: { cellWidth: 10, halign: 'right' },
+      3: { cellWidth: 17 },
+      4: { cellWidth: 21, halign: 'right', fontStyle: 'bold' },
+      5: { cellWidth: 20, halign: 'right' },
+      6: { cellWidth: 20, halign: 'right' },
+      7: { cellWidth: 19, halign: 'right' },
+      8: { cellWidth: 20, halign: 'right' },
+      9: { cellWidth: 24 },
+      10: { cellWidth: 14 },
+      11: { cellWidth: 20, halign: 'right', fontStyle: 'bold' },
+      12: { cellWidth: 20, halign: 'right' },
+    },
+    didParseCell: (data) => {
+      if (data.section === 'foot' && data.column.index >= 4 && data.column.index <= 12) data.cell.styles.halign = 'right'
+      // Locação de salas isolada em destaque
+      if (data.section === 'foot' && data.row.index === 2) {
+        data.cell.styles.fillColor = BRAND_900
+        data.cell.styles.textColor = 255
+      }
+    },
+    didDrawPage: () => {
+      doc.setFontSize(8)
+      doc.setTextColor(...SLATE_500)
+      doc.text('Gestão de Leads | Faturamento & Eventos', margin, pageHeight - 7)
+      doc.text(`Página ${doc.getNumberOfPages()}`, pageWidth - margin, pageHeight - 7, { align: 'right' })
+    },
+  })
+
+  doc.save(`faturamento_${timestampForFilename()}.pdf`)
 }

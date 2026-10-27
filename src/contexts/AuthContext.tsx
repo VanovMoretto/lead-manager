@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { AuthError, Session, User } from '@supabase/supabase-js'
-import { isPasswordRecoveryRedirect, setRememberSession, supabase } from '../lib/supabase'
+import { isPasswordRecoveryRedirect, isRecoverySession, setRememberSession, supabase } from '../lib/supabase'
 import type { UserProfile } from '../types/lead'
 
 type ActionResult = { error: string | null }
@@ -14,7 +14,7 @@ function toLoginEmail(identifier: string): string {
   return value.includes('@') ? value : `${value}${DEFAULT_EMAIL_DOMAIN}`
 }
 
-const INACTIVE_NOTICE = 'Seu acesso está desativado. Fale com um administrador do sistema.'
+const INACTIVE_NOTICE = 'Seu acesso ainda não foi liberado ou está desativado. Peça a um administrador para ativá-lo no Painel Admin.'
 
 type AuthContextValue = {
   session: Session | null
@@ -91,7 +91,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profileState, setProfileState] = useState<ProfileState | null>(null)
   const [profileVersion, setProfileVersion] = useState(0)
   const [accessNotice, setAccessNotice] = useState<string | null>(null)
-  const [passwordRecovery, setPasswordRecovery] = useState(isPasswordRecoveryRedirect)
+  // Sinal de que o link de recuperação foi aberto (URL ou evento do Supabase)
+  const [recoveryRequested, setPasswordRecovery] = useState(isPasswordRecoveryRedirect)
+  // A tela de nova senha só vale para uma sessão aberta pelo link: "?type=recovery" numa sessão comum não basta
+  const passwordRecovery = recoveryRequested && isRecoverySession(session)
   const userId = session?.user.id ?? null
 
   useEffect(() => {
@@ -215,6 +218,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   )
 
   const completePasswordRecovery = useCallback(async (newPassword: string): Promise<ActionResult> => {
+    const { data } = await supabase.auth.getSession()
+    if (!isRecoverySession(data.session)) {
+      return { error: 'Este link de recuperação não é válido. Para trocar a senha estando logado, use o Perfil.' }
+    }
     const { error } = await supabase.auth.updateUser({ password: newPassword })
     if (error) return { error: translateAuthError(error, 'Não foi possível salvar a nova senha. Tente novamente.') }
     setPasswordRecovery(false)

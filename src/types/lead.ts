@@ -88,6 +88,31 @@ export const DEFAULT_LOSS_REASONS = [
   'Outros',
 ] as const
 
+/** Situação do evento na planilha de faturamento. */
+export const OPERATIONAL_STATUSES = ['a_confirmar', 'confirmado', 'realizado'] as const
+export type OperationalStatus = (typeof OPERATIONAL_STATUSES)[number]
+export const OPERATIONAL_STATUS_LABELS: Record<OperationalStatus, string> = {
+  a_confirmar: 'À confirmar',
+  confirmado: 'Confirmado',
+  realizado: 'Realizado',
+}
+
+export const PAYMENT_STATUSES = ['pendente', 'pago', 'parcial'] as const
+export type PaymentStatus = (typeof PAYMENT_STATUSES)[number]
+export const PAYMENT_STATUS_LABELS: Record<PaymentStatus, string> = {
+  pendente: 'Pendente',
+  pago: 'Pago',
+  parcial: 'Parcial',
+}
+
+export const SURVEY_STATUSES = ['nao_enviada', 'enviada', 'respondida'] as const
+export type SurveyStatus = (typeof SURVEY_STATUSES)[number]
+export const SURVEY_STATUS_LABELS: Record<SurveyStatus, string> = {
+  nao_enviada: 'Não enviada',
+  enviada: 'Enviada',
+  respondida: 'Respondida',
+}
+
 /** Motivo que torna `loss_reason_details` obrigatório na interface. */
 export const LOSS_REASON_OTHER = 'Outros'
 
@@ -140,8 +165,18 @@ export type Lead = {
   has_lodging: boolean
   /** Valor de Hospedagem (0 quando `has_lodging` é false). */
   lodging_value: number
-  /** Coluna gerada: locação + A&B + hospedagem. Somente leitura. */
+  /** Inclui Equipamentos / Extras? */
+  has_equipment: boolean
+  /** Valor de Equipamentos / Extras (0 quando `has_equipment` é false). */
+  equipment_value: number
+  /** Inclui Estacionamento? */
+  has_parking: boolean
+  /** Valor de Estacionamento (0 quando `has_parking` é false). */
+  parking_value: number
+  /** Coluna gerada: Receita Bruta (100% dos 5 serviços). Somente leitura. */
   total_value: number
+  /** Coluna gerada: Receita Líquida do Hotel (100% locação e hospedagem, 50% estac., 15% equip., 6% A&B). Somente leitura. */
+  net_value: number
   /** Proposta formal foi gerada/enviada? */
   proposal_sent: boolean
   /** Único quando informado. */
@@ -156,6 +191,19 @@ export type Lead = {
 
   /** Observações da negociação (painel de detalhes do lead). */
   observations: string | null
+
+  // Evento e pós-evento (planilha de faturamento)
+  /** Nome do evento, ex.: "Reunião Virtueyes". */
+  event_name: string | null
+  /** Número de pessoas. */
+  pax: number | null
+  /** À confirmar, confirmado ou realizado (anda junto com `status`, por trigger). */
+  operational_status: OperationalStatus
+  nf_rental: string | null
+  nf_ab: string | null
+  nf_parking: string | null
+  payment_status: PaymentStatus
+  survey_status: SurveyStatus
 
   /** Usuário que cadastrou o lead (default `auth.uid()`). */
   user_id: UUID | null
@@ -175,7 +223,13 @@ export type Lead = {
 }
 
 /** Colunas que o banco calcula e que nunca são enviadas em INSERT/UPDATE. */
-type LeadGeneratedFields = 'contact_phone_digits' | 'total_value' | 'room_interest' | 'event_last_date' | 'cnpj_digits'
+type LeadGeneratedFields =
+  | 'contact_phone_digits'
+  | 'total_value'
+  | 'net_value'
+  | 'room_interest'
+  | 'event_last_date'
+  | 'cnpj_digits'
 
 /** Campos que o banco preenche sozinho quando omitidos. */
 type LeadDbDefaults =
@@ -192,6 +246,13 @@ type LeadDbDefaults =
   | 'proposal_sent'
   | 'status'
   | 'user_id'
+  | 'has_equipment'
+  | 'equipment_value'
+  | 'has_parking'
+  | 'parking_value'
+  | 'operational_status'
+  | 'payment_status'
+  | 'survey_status'
 
 /** Campos anuláveis, que podem ser omitidos num INSERT. */
 type LeadNullableFields =
@@ -210,6 +271,11 @@ type LeadNullableFields =
   | 'client_id'
   | 'contact_id'
   | 'cnpj'
+  | 'event_name'
+  | 'pax'
+  | 'nf_rental'
+  | 'nf_ab'
+  | 'nf_parking'
 
 /** Payload para criar um lead: só `contact_name` é obrigatório. */
 export type LeadInsert = Omit<Lead, LeadDbDefaults | LeadNullableFields | LeadGeneratedFields> &
@@ -249,6 +315,18 @@ export const EMPTY_LEAD_FORM: LeadFormData = {
   loss_reason: null,
   loss_reason_details: null,
   observations: null,
+  event_name: null,
+  pax: null,
+  operational_status: 'a_confirmar',
+  has_equipment: false,
+  equipment_value: 0,
+  has_parking: false,
+  parking_value: 0,
+  nf_rental: null,
+  nf_ab: null,
+  nf_parking: null,
+  payment_status: 'pendente',
+  survey_status: 'nao_enviada',
 }
 
 /** Filtros da listagem de leads. */

@@ -15,6 +15,7 @@ import {
   MapPin,
   NotebookPen,
   Pencil,
+  Trash2,
   Plus,
   RefreshCw,
   Save,
@@ -32,11 +33,14 @@ import ClientTypeBadge from '../components/ClientTypeBadge'
 import ContactFormModal from '../components/ContactFormModal'
 import StatusBadge from '../components/StatusBadge'
 import WhatsAppButton from '../components/WhatsAppButton'
+import { useAuth } from '../contexts/AuthContext'
+import { useConfirm } from '../hooks/useConfirm'
 import type { RecurringClientMatch } from '../hooks/useRecurringClient'
 import { normalizeEmail, normalizePhoneDigits } from '../lib/contactIdentity'
 import { isProposalSent, toLocalISODate } from '../lib/dashboard'
 import { formatBRL, formatCNPJ, formatDateBR, isValidCNPJ, onlyDigits } from '../lib/format'
 import { formatLeadEventPeriod, getLeadRooms, getLeadValues, hasAnyValue } from '../lib/leadFields'
+import { removeAttachmentFiles } from '../lib/leadAttachments'
 import { RateLimitError, guardMutation } from '../lib/rateLimit'
 import { supabase } from '../lib/supabase'
 import { cn, isRowClick } from '../lib/utils'
@@ -528,6 +532,146 @@ function NewBranchModal({ client, onClose, onCreated }: { client: Client; onClos
   )
 }
 
+/**
+ * Exclui o cliente (somente ADMIN). Os contatos saem junto; as propostas ficam sem vínculo,
+ * a não ser que o ADMIN marque para excluí-las também (com os anexos).
+ */
+function DeleteClientModal({
+  client,
+  leadIds,
+  onClose,
+  onDeleted,
+}: {
+  client: Client
+  leadIds: string[]
+  onClose: () => void
+  onDeleted: () => void
+}) {
+  const [withProposals, setWithProposals] = useState(false)
+  const [confirmation, setConfirmation] = useState('')
+  const [deleting, setDeleting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const label = client.client_type === 'company' ? 'empresa' : 'cliente'
+  const canDelete = confirmation.trim().toLocaleLowerCase('pt-BR') === client.name.trim().toLocaleLowerCase('pt-BR')
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !deleting) onClose()
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [onClose, deleting])
+
+  const remove = async () => {
+    if (!canDelete || deleting) return
+    setDeleting(true)
+    setError(null)
+    try {
+      if (withProposals && leadIds.length > 0) {
+        const { data: files } = await supabase.from('lead_attachments').select('storage_path').in('lead_id', leadIds)
+        const { data: removed, error: leadsError } = await supabase.from('leads').delete().in('id', leadIds).select('id')
+        if (leadsError || (removed?.length ?? 0) === 0) {
+          setError('Não foi possível excluir as propostas deste cliente. Apenas o ADMIN pode excluir.')
+          return
+        }
+        await removeAttachmentFiles((files ?? []).map((file) => file.storage_path))
+      }
+      // .select() confirma a exclusão: a política do banco pode recusar em silêncio
+      const { data, error: dbError } = await supabase.from('clients').delete().eq('id', client.id).select('id')
+      if (dbError || !data || data.length === 0) {
+        setError(`Não foi possível excluir esta ${label}. Apenas o ADMIN pode excluir.`)
+        return
+      }
+      onDeleted()
+    } catch {
+      setError('Sem conexão com o servidor. Nada foi excluído.')
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4">
+      <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={() => !deleting && onClose()} />
+      <div
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="delete-client-title"
+        className="relative w-full max-w-lg rounded-t-2xl border border-slate-200 bg-white shadow-2xl sm:rounded-2xl dark:border-slate-800 dark:bg-slate-900"
+      >
+        <header className="flex items-center gap-3 border-b border-slate-200 px-5 py-4 dark:border-slate-800">
+          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-red-50 text-red-600 dark:bg-red-950/40 dark:text-red-400">
+            <Trash2 className="h-5 w-5" aria-hidden="true" />
+          </span>
+          <h2 id="delete-client-title" className="text-base font-semibold text-slate-900 dark:text-white">
+            Excluir {label} "{client.name}"
+          </h2>
+        </header>
+        <div className="space-y-4 px-5 py-5 text-sm text-slate-600 dark:text-slate-300">
+          <p>
+            A exclusão é permanente. As pessoas de contato saem junto.{' '}
+            {leadIds.length > 0
+              ? `As ${leadIds.length} proposta(s) continuam em Consultar Propostas, sem vínculo com um cliente.`
+              : 'Não há propostas vinculadas.'}
+          </p>
+          {leadIds.length > 0 && (
+            <label className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-red-200 bg-red-50/60 px-3 py-2.5 text-red-800 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200">
+              <input
+                type="checkbox"
+                checked={withProposals}
+                onChange={(event) => setWithProposals(event.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-red-300 text-red-600 focus:ring-red-600"
+              />
+              <span>
+                Excluir também as {leadIds.length} proposta(s) deste cliente, com os anexos
+              </span>
+            </label>
+          )}
+          <div>
+            <label htmlFor="delete-client-confirm" className="mb-1.5 block font-medium text-slate-700 dark:text-slate-200">
+              Para confirmar, digite o nome: <strong className="font-semibold">{client.name}</strong>
+            </label>
+            <input
+              id="delete-client-confirm"
+              type="text"
+              autoFocus
+              autoComplete="off"
+              value={confirmation}
+              onChange={(event) => setConfirmation(event.target.value)}
+              className="block w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-red-500 focus:outline-none focus:ring-2 focus:ring-red-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+            />
+          </div>
+          {error && (
+            <p role="alert" className="flex items-start gap-2 rounded-lg bg-red-50 px-3 py-2 text-red-700 dark:bg-red-950/40 dark:text-red-300">
+              <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+              {error}
+            </p>
+          )}
+        </div>
+        <footer className="flex justify-end gap-2 border-t border-slate-200 px-5 py-4 dark:border-slate-800">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={deleting}
+            className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            onClick={() => void remove()}
+            disabled={!canDelete || deleting}
+            className="inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {deleting ? <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Trash2 className="h-4 w-4" aria-hidden="true" />}
+            Excluir {label}
+          </button>
+        </footer>
+      </div>
+    </div>
+  )
+}
+
 type ContactStats = { count: number; firstYear: number | null; lastYear: number | null }
 
 function ContactCard({
@@ -535,11 +679,14 @@ function ContactCard({
   stats,
   optedOut,
   onEdit,
+  onDelete,
 }: {
   contact: ClientContact
   stats: ContactStats
   optedOut: boolean
   onEdit: () => void
+  /** Só para ADMIN. */
+  onDelete?: () => void
 }) {
   const years =
     stats.firstYear === null ? null : stats.firstYear === stats.lastYear ? String(stats.firstYear) : `${stats.firstYear}–${stats.lastYear}`
@@ -558,15 +705,28 @@ function ContactCard({
           </p>
           <p className="text-xs text-slate-500 dark:text-slate-400">{contact.role || 'Cargo não informado'}</p>
         </div>
-        <button
-          type="button"
-          onClick={onEdit}
-          title="Editar contato"
-          aria-label={`Editar ${contact.name}`}
-          className="shrink-0 rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
-        >
-          <Pencil className="h-4 w-4" aria-hidden="true" />
-        </button>
+        <div className="flex shrink-0 gap-0.5">
+          <button
+            type="button"
+            onClick={onEdit}
+            title="Editar contato"
+            aria-label={`Editar ${contact.name}`}
+            className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+          >
+            <Pencil className="h-4 w-4" aria-hidden="true" />
+          </button>
+          {onDelete && (
+            <button
+              type="button"
+              onClick={onDelete}
+              title="Excluir contato"
+              aria-label={`Excluir ${contact.name}`}
+              className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/40 dark:hover:text-red-400"
+            >
+              <Trash2 className="h-4 w-4" aria-hidden="true" />
+            </button>
+          )}
+        </div>
       </div>
       <div className="flex flex-wrap gap-1.5">
         {contact.is_primary && (
@@ -612,6 +772,10 @@ function ContactCard({
 export default function ClientDashboard() {
   const { clientId = '' } = useParams()
   const { openEditLead, openNewLeadForClient, leadsVersion } = useOutletContext<LayoutOutletContext>()
+  const { isAdmin } = useAuth()
+  const confirm = useConfirm()
+  const [deleteModal, setDeleteModal] = useState(false)
+  const [contactError, setContactError] = useState<string | null>(null)
   const navigate = useNavigate()
   const [retryCount, setRetryCount] = useState(0)
   const [contactModal, setContactModal] = useState<{ contact: ClientContact | null } | null>(null)
@@ -763,6 +927,28 @@ export default function ClientDashboard() {
     setContactModal(null)
   }
 
+  /** Exclui a pessoa de contato (somente ADMIN); as propostas dela continuam, sem o contato. */
+  const handleDeleteContact = async (contact: ClientContact) => {
+    const count = contactStats.get(contact.id)?.count ?? 0
+    const confirmed = await confirm({
+      title: `Excluir o contato "${contact.name}"?`,
+      description:
+        count > 0
+          ? `Essa ação é permanente. As ${count} proposta(s) tratadas com essa pessoa continuam no histórico, sem o vínculo com o contato.`
+          : 'Essa ação é permanente.',
+      confirmLabel: 'Excluir contato',
+      tone: 'danger',
+    })
+    if (!confirmed) return
+    setContactError(null)
+    const { data: removed, error: dbError } = await supabase.from('client_contacts').delete().eq('id', contact.id).select('id')
+    if (dbError || !removed || removed.length === 0) {
+      setContactError('Não foi possível excluir o contato. Apenas o ADMIN pode excluir.')
+      return
+    }
+    updateData({ contacts: contacts.filter((item) => item.id !== contact.id) })
+  }
+
   return (
     <div className="space-y-6">
       {backLink}
@@ -788,6 +974,16 @@ export default function ClientDashboard() {
             >
               <GitBranchPlus className="h-4 w-4" aria-hidden="true" />
               Criar outro braço / CNPJ desta empresa
+            </button>
+          )}
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={() => setDeleteModal(true)}
+              className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold text-red-600 transition-colors hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40"
+            >
+              <Trash2 className="h-4 w-4" aria-hidden="true" />
+              Excluir {client.client_type === 'company' ? 'empresa' : 'cliente'}
             </button>
           )}
         </div>
@@ -835,6 +1031,12 @@ export default function ClientDashboard() {
           </button>
         }
       >
+        {contactError && (
+          <p role="alert" className="mx-5 mt-4 flex items-center gap-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300">
+            <CircleAlert className="h-4 w-4 shrink-0" aria-hidden="true" />
+            {contactError}
+          </p>
+        )}
         {contacts.length === 0 ? (
           <p className="px-5 py-8 text-center text-sm text-slate-500 dark:text-slate-400">Nenhuma pessoa de contato cadastrada.</p>
         ) : (
@@ -846,6 +1048,7 @@ export default function ClientDashboard() {
                 stats={contactStats.get(contact.id) ?? { count: 0, firstYear: null, lastYear: null }}
                 optedOut={isContactOptedOut(contact, optedOut)}
                 onEdit={() => setContactModal({ contact })}
+                onDelete={isAdmin ? () => void handleDeleteContact(contact) : undefined}
               />
             ))}
           </ul>
@@ -984,6 +1187,15 @@ export default function ClientDashboard() {
             setBranchModal(false)
             navigate(`/leads/${id}`)
           }}
+        />
+      )}
+
+      {deleteModal && (
+        <DeleteClientModal
+          client={client}
+          leadIds={leads.map((lead) => lead.id)}
+          onClose={() => setDeleteModal(false)}
+          onDeleted={() => navigate('/leads', { replace: true })}
         />
       )}
 

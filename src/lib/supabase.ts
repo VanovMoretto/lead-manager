@@ -92,3 +92,20 @@ export const supabase = createClient<Database>(
     },
   },
 )
+
+/**
+ * A sessão foi aberta pelo link de "Esqueci minha senha"? O Supabase registra no token
+ * como cada login aconteceu (`amr`); só uma sessão de recuperação pode trocar a senha
+ * sem informar a atual. Ter `type=recovery` na URL não basta.
+ */
+export function isRecoverySession(session: { access_token: string } | null): boolean {
+  if (!session) return false
+  try {
+    const payload = session.access_token.split('.')[1] ?? ''
+    const json = atob(payload.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(payload.length / 4) * 4, '='))
+    const claims = JSON.parse(json) as { amr?: Array<{ method?: string }> }
+    return Array.isArray(claims.amr) && claims.amr.some((entry) => entry.method === 'recovery')
+  } catch {
+    return false
+  }
+}

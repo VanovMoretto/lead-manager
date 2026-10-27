@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type
 import {
   BadgeCheck,
   BedDouble,
+  Car,
   Check,
   Calculator,
   CalendarDays,
@@ -12,6 +13,7 @@ import {
   FileText,
   LoaderCircle,
   MapPin,
+  MonitorSpeaker,
   Pencil,
   RefreshCw,
   User,
@@ -36,9 +38,10 @@ import {
   toCents,
 } from '../lib/format'
 import { useSettingsOptions } from '../hooks/useSettingsOptions'
-import { countEventDays, getLeadRooms } from '../lib/leadFields'
+import { NET_RATES_LABEL, computeNetValue, countEventDays, getLeadRooms } from '../lib/leadFields'
 import RecurringClientNotice from './RecurringClientNotice'
 import { useAuth } from '../contexts/AuthContext'
+import { useConfirm } from '../hooks/useConfirm'
 import {
   useRecurringClient,
   type ClientBranch,
@@ -108,6 +111,13 @@ type FormState = {
   ab_cents: number | null
   has_lodging: boolean
   lodging_cents: number | null
+  has_equipment: boolean
+  equipment_cents: number | null
+  has_parking: boolean
+  parking_cents: number | null
+  event_name: string
+  /** Só dígitos (o campo aceita apenas números). */
+  pax: string
   proposal_sent: boolean
   proposal_number: string
   status: LeadStatus
@@ -143,6 +153,12 @@ function buildInitialState(lead?: Lead | null, presetClient?: RecurringClientMat
     ab_cents: lead?.has_ab ? toCents(lead.ab_value) ?? null : null,
     has_lodging: lead?.has_lodging ?? false,
     lodging_cents: lead?.has_lodging ? toCents(lead.lodging_value) ?? null : null,
+    has_equipment: lead?.has_equipment ?? false,
+    equipment_cents: lead?.has_equipment ? toCents(lead.equipment_value) ?? null : null,
+    has_parking: lead?.has_parking ?? false,
+    parking_cents: lead?.has_parking ? toCents(lead.parking_value) ?? null : null,
+    event_name: lead?.event_name ?? '',
+    pax: lead?.pax !== null && lead?.pax !== undefined ? String(lead.pax) : '',
     proposal_sent: lead?.proposal_sent ?? false,
     proposal_number: lead?.proposal_number ?? '',
     status: lead?.status ?? 'em_aberto',
@@ -227,6 +243,12 @@ function buildPayload(state: FormState, forceOptOut = false): LeadInsert {
     ab_value: state.has_ab ? (state.ab_cents ?? 0) / 100 : 0,
     has_lodging: state.has_lodging,
     lodging_value: state.has_lodging ? (state.lodging_cents ?? 0) / 100 : 0,
+    has_equipment: state.has_equipment,
+    equipment_value: state.has_equipment ? (state.equipment_cents ?? 0) / 100 : 0,
+    has_parking: state.has_parking,
+    parking_value: state.has_parking ? (state.parking_cents ?? 0) / 100 : 0,
+    event_name: state.event_name.trim().replace(/\s+/g, ' ') || null,
+    pax: state.pax ? Number.parseInt(state.pax, 10) : null,
     // Lead fechado implica proposta enviada
     proposal_sent: state.proposal_sent || isClosed,
     proposal_number: needsProposalNumber(state) ? state.proposal_number.trim() || null : null,
@@ -282,7 +304,27 @@ function translateDbError(error: PostgrestError): { message: string; field?: Fie
 
 /** Receita total da proposta em centavos: locação + A&B + hospedagem (só o que estiver marcado). */
 function computeTotalCents(state: FormState): number {
-  return (state.value_cents ?? 0) + (state.has_ab ? state.ab_cents ?? 0 : 0) + (state.has_lodging ? state.lodging_cents ?? 0 : 0)
+  return (
+    (state.value_cents ?? 0) +
+    (state.has_ab ? state.ab_cents ?? 0 : 0) +
+    (state.has_lodging ? state.lodging_cents ?? 0 : 0) +
+    (state.has_equipment ? state.equipment_cents ?? 0 : 0) +
+    (state.has_parking ? state.parking_cents ?? 0 : 0)
+  )
+}
+
+/** Receita Líquida do Hotel em centavos (mesma regra da coluna net_value do banco). */
+function computeNetCents(state: FormState): number {
+  const reais = (cents: number | null, enabled = true) => (enabled ? (cents ?? 0) / 100 : 0)
+  return Math.round(
+    computeNetValue({
+      rental: reais(state.value_cents),
+      ab: reais(state.ab_cents, state.has_ab),
+      lodging: reais(state.lodging_cents, state.has_lodging),
+      equipment: reais(state.equipment_cents, state.has_equipment),
+      parking: reais(state.parking_cents, state.has_parking),
+    }) * 100,
+  )
 }
 
 /** Garante que o valor atual apareça no select, mesmo que a opção tenha sido desativada. */
@@ -538,6 +580,7 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
   const mode: LeadFormMode = lead ? 'edit' : 'create'
   // Excluir lead é exclusivo do ADMIN (o banco também recusa a exclusão de quem não é)
   const { isAdmin } = useAuth()
+  const confirm = useConfirm()
   const initialState = useMemo(() => buildInitialState(lead, presetClient), [lead, presetClient])
 
   const [form, setForm] = useState<FormState>(initialState)
@@ -578,13 +621,12 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
     if (submitError) setSubmitError(null)
   }
 
-  /** Liga/desliga A&B ou Hospedagem; ao desligar, zera o valor; ao ligar, foca o campo de valor. */
-  const toggleExtra = (kind: 'ab' | 'lodging', enabled: boolean) => {
-    setForm((current) =>
-      kind === 'ab'
-        ? { ...current, has_ab: enabled, ab_cents: enabled ? current.ab_cents : null }
-        : { ...current, has_lodging: enabled, lodging_cents: enabled ? current.lodging_cents : null },
-    )
+  /** Liga/desliga um serviço extra; ao desligar, zera o valor; ao ligar, foca o campo de valor. */
+  const toggleExtra = (kind: 'ab' | 'lodging' | 'equipment' | 'parking', enabled: boolean) => {
+    setForm((current) => {
+      const cents = `${kind}_cents` as const
+      return { ...current, [`has_${kind}`]: enabled, [cents]: enabled ? current[cents] : null }
+    })
     if (enabled) pendingFocusRef.current = `lead-${kind}_cents`
   }
 
@@ -594,9 +636,10 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
     if (!pendingFocusRef.current) return
     document.getElementById(pendingFocusRef.current)?.focus()
     pendingFocusRef.current = null
-  }, [form.has_ab, form.has_lodging])
+  }, [form.has_ab, form.has_lodging, form.has_equipment, form.has_parking])
 
   const totalCents = computeTotalCents(form)
+  const netCents = computeNetCents(form)
   const eventDays = form.multi_day
     ? countEventDays({ event_date: form.event_date || null, event_end_date: form.event_end_date || null })
     : null
@@ -858,9 +901,12 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
 
   const handleDelete = async () => {
     if (!lead || busy) return
-    const confirmed = window.confirm(
-      `Excluir a proposta de "${lead.contact_name}"?\n\nEssa ação é permanente e remove todos os dados deste orçamento, inclusive os anexos.`,
-    )
+    const confirmed = await confirm({
+      title: `Excluir a proposta de "${lead.contact_name}"?`,
+      description: 'Essa ação é permanente e remove todos os dados deste orçamento, inclusive os anexos.',
+      confirmLabel: 'Excluir proposta',
+      tone: 'danger',
+    })
     if (!confirmed) return
 
     setDeleting(true)
@@ -1136,6 +1182,34 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
 
         {/* 3. Data e escopo */}
         <Section icon={CalendarDays} title="Data e Escopo">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-[minmax(0,1fr)_9rem]">
+            <Field label="Nome do evento" htmlFor="lead-event_name" hint="Aparece na planilha de faturamento.">
+              <input
+                id="lead-event_name"
+                type="text"
+                maxLength={200}
+                autoComplete="off"
+                placeholder="Ex.: Reunião anual de vendas"
+                value={form.event_name}
+                onChange={(event) => update('event_name', event.target.value)}
+                className={inputClassName(false)}
+              />
+            </Field>
+            <Field label="PAX (nº de pessoas)" htmlFor="lead-pax">
+              <input
+                id="lead-pax"
+                type="text"
+                inputMode="numeric"
+                autoComplete="off"
+                maxLength={6}
+                placeholder="Ex.: 80"
+                value={form.pax}
+                onChange={(event) => update('pax', onlyDigits(event.target.value).slice(0, 6))}
+                className={cn(inputClassName(false), 'tabular-nums')}
+              />
+            </Field>
+          </div>
+
           <label className="flex w-fit cursor-pointer items-center gap-2.5 text-sm font-medium text-slate-700 dark:text-slate-200">
             <input
               type="checkbox"
@@ -1265,28 +1339,77 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
                 </Field>
               )}
             </div>
+            <div className="space-y-2">
+              <YesNoToggle
+                id="lead-has_equipment"
+                label="Inclui Equipamentos / Extras?"
+                icon={MonitorSpeaker}
+                value={form.has_equipment}
+                onChange={(value) => toggleExtra('equipment', value)}
+              />
+              {form.has_equipment && (
+                <Field label="Valor de Equipamentos (R$)" htmlFor="lead-equipment_cents">
+                  <MoneyInput
+                    id="lead-equipment_cents"
+                    cents={form.equipment_cents}
+                    onChange={(cents) => update('equipment_cents', cents)}
+                  />
+                </Field>
+              )}
+            </div>
+            <div className="space-y-2">
+              <YesNoToggle
+                id="lead-has_parking"
+                label="Inclui Estacionamento?"
+                icon={Car}
+                value={form.has_parking}
+                onChange={(value) => toggleExtra('parking', value)}
+              />
+              {form.has_parking && (
+                <Field label="Valor de Estacionamento (R$)" htmlFor="lead-parking_cents">
+                  <MoneyInput
+                    id="lead-parking_cents"
+                    cents={form.parking_cents}
+                    onChange={(cents) => update('parking_cents', cents)}
+                  />
+                </Field>
+              )}
+            </div>
           </div>
 
-          {/* Resumo calculado em tempo real */}
+          {/* Resumo das receitas: só na edição (no cadastro os valores ainda estão sendo digitados) */}
+          {mode === 'edit' && (
           <div
-            className="flex flex-col gap-3 rounded-xl border border-brand-200 bg-brand-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between dark:border-brand-900/60 dark:bg-brand-900/20"
+            className="overflow-hidden rounded-xl border border-brand-200 bg-brand-50 dark:border-brand-900/60 dark:bg-brand-900/20"
             aria-live="polite"
           >
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 border-b border-brand-200/70 px-4 py-3 dark:border-brand-900/50">
               <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-brand-600 text-white">
                 <Calculator className="h-5 w-5" aria-hidden="true" />
               </span>
-              <div className="leading-tight">
-                <p className="text-xs font-semibold uppercase tracking-wide text-brand-800 dark:text-brand-200">Receita Total da Proposta</p>
-                <p className="text-xs text-brand-700/80 dark:text-brand-300/80">
-                  Locação {formatCentsBRL(form.value_cents ?? 0)}
-                  {form.has_ab && ` + A&B ${formatCentsBRL(form.ab_cents ?? 0)}`}
-                  {form.has_lodging && ` + Hospedagem ${formatCentsBRL(form.lodging_cents ?? 0)}`}
-                </p>
+              <div className="min-w-0 flex-1 leading-tight">
+                <p className="text-xs font-semibold uppercase tracking-wide text-brand-800 dark:text-brand-200">Locação de sala</p>
               </div>
+              <p className="text-2xl font-bold tabular-nums text-brand-900 dark:text-white">{formatCentsBRL(form.value_cents ?? 0)}</p>
             </div>
-            <p className="text-2xl font-bold tabular-nums text-brand-900 dark:text-white">{formatCentsBRL(totalCents)}</p>
+            <dl className="divide-y divide-brand-200/60 px-4 text-sm dark:divide-brand-900/40">
+              <div className="flex items-baseline justify-between gap-3 py-2">
+                <dt className="min-w-0">
+                  <span className="font-medium text-slate-800 dark:text-slate-100">Receita líquida total</span>
+                  <span className="block text-xs text-slate-500 dark:text-slate-400">{NET_RATES_LABEL}</span>
+                </dt>
+                <dd className="font-semibold tabular-nums text-slate-900 dark:text-white">{formatCentsBRL(netCents)}</dd>
+              </div>
+              <div className="flex items-baseline justify-between gap-3 py-2">
+                <dt className="min-w-0">
+                  <span className="font-medium text-slate-800 dark:text-slate-100">Receita bruta total</span>
+                  <span className="block text-xs text-slate-500 dark:text-slate-400">Soma integral de todos os serviços</span>
+                </dt>
+                <dd className="font-semibold tabular-nums text-slate-900 dark:text-white">{formatCentsBRL(totalCents)}</dd>
+              </div>
+            </dl>
           </div>
+          )}
         </Section>
 
         {/* 4. Proposta e fechamento */}
@@ -1491,11 +1614,21 @@ export default function LeadFormModal({ open, onClose, lead = null, onSaved, onD
     formStateRef.current = state
   }, [])
 
-  const requestClose = useCallback(() => {
+  const confirm = useConfirm()
+  const requestClose = useCallback(async () => {
     if (formStateRef.current.submitting) return
-    if (formStateRef.current.dirty && !window.confirm('Descartar as informações preenchidas?')) return
+    if (formStateRef.current.dirty) {
+      const discard = await confirm({
+        title: 'Descartar as informações preenchidas?',
+        description: 'O que você digitou nesta proposta ainda não foi salvo.',
+        confirmLabel: 'Descartar',
+        cancelLabel: 'Continuar editando',
+        tone: 'warning',
+      })
+      if (!discard) return
+    }
     onClose()
-  }, [onClose])
+  }, [onClose, confirm])
 
   // ESC fecha e a página de fundo não rola enquanto o modal está aberto
   useEffect(() => {

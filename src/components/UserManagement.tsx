@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { CircleAlert, Info, RefreshCw, Search, ShieldCheck, UserCheck, Users } from 'lucide-react'
 import type { PostgrestError } from '@supabase/supabase-js'
 import { DEFAULT_EMAIL_DOMAIN, useAuth } from '../contexts/AuthContext'
+import { useConfirm } from '../hooks/useConfirm'
 import { supabase } from '../lib/supabase'
 import { RateLimitError, guardMutation } from '../lib/rateLimit'
 import { cn } from '../lib/utils'
@@ -42,6 +43,7 @@ async function fetchProfiles(): Promise<UserProfile[]> {
 /** Aba "Usuários" do Painel Admin: acesso ativo/inativo e papel de cada usuário. */
 export default function UserManagement() {
   const { user } = useAuth()
+  const confirm = useConfirm()
   const [reloadCount, setReloadCount] = useState(0)
   const [state, setState] = useState<LoadState | null>(null)
   const [search, setSearch] = useState('')
@@ -74,8 +76,28 @@ export default function UserManagement() {
 
   const updateAccess = async (profile: UserProfile, change: { is_admin?: boolean; is_active?: boolean }) => {
     const name = displayName(profile)
-    if (change.is_active === false && !window.confirm(`Desativar o acesso de "${name}"?\n\nO usuário deixa de ver e alterar qualquer dado do sistema.`)) return
-    if (change.is_admin === true && !window.confirm(`Tornar "${name}" administrador?\n\nADMIN pode excluir leads e anexos e gerenciar usuários e opções.`)) return
+    if (
+      change.is_active === false &&
+      !(await confirm({
+        title: `Desativar o acesso de "${name}"?`,
+        description: 'O usuário deixa de ver e alterar qualquer dado do sistema. Você pode reativar depois.',
+        confirmLabel: 'Desativar acesso',
+        tone: 'danger',
+      }))
+    ) {
+      return
+    }
+    if (
+      change.is_admin === true &&
+      !(await confirm({
+        title: `Tornar "${name}" administrador?`,
+        description: 'ADMIN pode excluir propostas, clientes e anexos e gerenciar usuários e opções do Painel Admin.',
+        confirmLabel: 'Tornar ADMIN',
+        tone: 'warning',
+      }))
+    ) {
+      return
+    }
 
     const apply = (next: UserProfile) =>
       setState((current) =>
@@ -146,8 +168,8 @@ export default function UserManagement() {
 
       <p className="flex items-start gap-2 border-b border-slate-200 bg-slate-50 px-5 py-3 text-xs text-slate-600 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-300">
         <Info className="mt-px h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-        Novos usuários são criados no Supabase (Authentication → Users) e aparecem aqui como usuário comum ativo. Você não pode
-        alterar o próprio acesso.
+        Novos usuários são criados no Supabase (Authentication → Users) e aparecem aqui como <strong className="font-semibold">inativos</strong>: ative o acesso
+        para a pessoa conseguir entrar. Você não pode alterar o próprio acesso.
       </p>
 
       {actionError && (

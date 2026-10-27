@@ -9,6 +9,7 @@ import {
   LogOut,
   Menu,
   Plus,
+  Receipt,
   Settings,
   X,
   type LucideIcon,
@@ -47,6 +48,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
   { to: '/propostas', label: 'Consultar Propostas', icon: FileText },
   { to: '/leads', label: 'Consultar Leads', icon: Building2 },
+  { to: '/faturamento', label: 'Faturamento & Eventos', icon: Receipt },
   { to: '/admin', label: 'Painel Admin', icon: Settings, adminOnly: true },
 ]
 

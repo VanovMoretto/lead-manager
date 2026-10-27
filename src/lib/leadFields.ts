@@ -27,29 +27,98 @@ export function formatLeadRooms(lead: Pick<Lead, 'room_interests' | 'room_intere
   return getLeadRooms(lead).join(separator)
 }
 
+/**
+ * Quanto de cada serviço fica no caixa do hotel (Receita Líquida).
+ * Mesma regra da coluna gerada `net_value` (migração 012).
+ */
+export const NET_RATES = { rental: 1, lodging: 1, parking: 0.5, equipment: 0.15, ab: 0.06 } as const
+
+export const NET_RATES_LABEL = '100% Loc./Hosp. · 50% Estac. · 15% Equip. · 6% A&B'
+
 export type LeadValueBreakdown = {
-  /** Locação / Espaço (`proposed_value`). */
+  /** Locação / Espaço (`proposed_value`): conta para a meta pessoal. */
   rental: number
   ab: number
   lodging: number
+  equipment: number
+  parking: number
+  /** Receita Bruta (100% de todos os serviços). */
   total: number
+  /** Receita Líquida do Hotel. */
+  net: number
 }
 
-/** Valores do orçamento separados e somados (o total do banco é usado quando disponível). */
-export function getLeadValues(
-  lead: Pick<Lead, 'proposed_value' | 'ab_value' | 'lodging_value' | 'total_value'>,
-): LeadValueBreakdown {
+type ValueSource = Pick<Lead, 'proposed_value' | 'ab_value' | 'lodging_value' | 'total_value'> &
+  Partial<Pick<Lead, 'equipment_value' | 'parking_value' | 'net_value'>>
+
+const round2 = (value: number) => Math.round(value * 100) / 100
+
+/** Receita Líquida do Hotel a partir dos valores de cada serviço. */
+export function computeNetValue(values: Pick<LeadValueBreakdown, 'rental' | 'ab' | 'lodging' | 'equipment' | 'parking'>): number {
+  return round2(
+    values.rental * NET_RATES.rental +
+      values.lodging * NET_RATES.lodging +
+      values.parking * NET_RATES.parking +
+      values.equipment * NET_RATES.equipment +
+      values.ab * NET_RATES.ab,
+  )
+}
+
+/** Valores do orçamento separados e somados (os totais do banco são usados quando disponíveis). */
+export function getLeadValues(lead: ValueSource): LeadValueBreakdown {
   const rental = Number(lead.proposed_value ?? 0)
   const ab = Number(lead.ab_value ?? 0)
   const lodging = Number(lead.lodging_value ?? 0)
-  const computed = Math.round((rental + ab + lodging) * 100) / 100
-  const total = lead.total_value === null || lead.total_value === undefined ? computed : Number(lead.total_value)
-  return { rental, ab, lodging, total }
+  const equipment = Number(lead.equipment_value ?? 0)
+  const parking = Number(lead.parking_value ?? 0)
+  const total =
+    lead.total_value === null || lead.total_value === undefined
+      ? round2(rental + ab + lodging + equipment + parking)
+      : Number(lead.total_value)
+  const net =
+    lead.net_value === null || lead.net_value === undefined
+      ? computeNetValue({ rental, ab, lodging, equipment, parking })
+      : Number(lead.net_value)
+  return { rental, ab, lodging, equipment, parking, total, net }
+}
+
+export const emptyValueBreakdown = (): LeadValueBreakdown => ({
+  rental: 0,
+  ab: 0,
+  lodging: 0,
+  equipment: 0,
+  parking: 0,
+  total: 0,
+  net: 0,
+})
+
+/** Soma os valores de vários orçamentos. */
+export function sumLeadValues(leads: ValueSource[]): LeadValueBreakdown {
+  return leads.reduce((sum, lead) => {
+    const values = getLeadValues(lead)
+    return {
+      rental: sum.rental + values.rental,
+      ab: sum.ab + values.ab,
+      lodging: sum.lodging + values.lodging,
+      equipment: sum.equipment + values.equipment,
+      parking: sum.parking + values.parking,
+      total: sum.total + values.total,
+      net: sum.net + values.net,
+    }
+  }, emptyValueBreakdown())
 }
 
 /** O lead tem algum valor informado (em qualquer componente)? */
-export function hasAnyValue(lead: Pick<Lead, 'proposed_value' | 'ab_value' | 'lodging_value'>): boolean {
-  return lead.proposed_value !== null || Number(lead.ab_value ?? 0) > 0 || Number(lead.lodging_value ?? 0) > 0
+export function hasAnyValue(
+  lead: Pick<Lead, 'proposed_value' | 'ab_value' | 'lodging_value'> & Partial<Pick<Lead, 'equipment_value' | 'parking_value'>>,
+): boolean {
+  return (
+    lead.proposed_value !== null ||
+    Number(lead.ab_value ?? 0) > 0 ||
+    Number(lead.lodging_value ?? 0) > 0 ||
+    Number(lead.equipment_value ?? 0) > 0 ||
+    Number(lead.parking_value ?? 0) > 0
+  )
 }
 
 /** Quantidade de dias do evento (1 para evento de um dia, null sem data). */

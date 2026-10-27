@@ -1,5 +1,5 @@
 import type { ISODate, Lead } from '../types/lead'
-import { getLeadRooms, getLeadValues, type LeadValueBreakdown } from './leadFields'
+import { emptyValueBreakdown, getLeadRooms, getLeadValues, type LeadValueBreakdown } from './leadFields'
 
 // =============================================================================
 // Período
@@ -95,7 +95,10 @@ export type DashboardLead = Pick<
   | 'proposed_value'
   | 'ab_value'
   | 'lodging_value'
+  | 'equipment_value'
+  | 'parking_value'
   | 'total_value'
+  | 'net_value'
   | 'loss_reason'
   | 'origin'
   | 'room_interest'
@@ -103,7 +106,7 @@ export type DashboardLead = Pick<
 >
 
 export const DASHBOARD_LEAD_COLUMNS =
-  'id, created_at, status, proposal_sent, proposed_value, ab_value, lodging_value, total_value, loss_reason, origin, room_interest, room_interests'
+  'id, created_at, status, proposal_sent, proposed_value, ab_value, lodging_value, equipment_value, parking_value, total_value, net_value, loss_reason, origin, room_interest, room_interests'
 
 /** Lead fechado conta como proposta enviada, mesmo que o toggle não tenha sido marcado. */
 export function isProposalSent(lead: Pick<Lead, 'proposal_sent' | 'status'>): boolean {
@@ -132,13 +135,16 @@ export type DashboardKpis = {
   openBreakdown: LeadValueBreakdown
 }
 
-const emptyBreakdown = (): LeadValueBreakdown => ({ rental: 0, ab: 0, lodging: 0, total: 0 })
+const emptyBreakdown = emptyValueBreakdown
 
 function addBreakdown(target: LeadValueBreakdown, values: LeadValueBreakdown) {
   target.rental += values.rental
   target.ab += values.ab
   target.lodging += values.lodging
+  target.equipment += values.equipment
+  target.parking += values.parking
   target.total += values.total
+  target.net += values.net
 }
 
 const ratio = (part: number, whole: number) => (whole > 0 ? part / whole : 0)

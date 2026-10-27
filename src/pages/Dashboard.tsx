@@ -35,6 +35,7 @@ import PageHeader from '../components/PageHeader'
 import WhatsAppButton from '../components/WhatsAppButton'
 import type { LayoutOutletContext } from '../components/Layout'
 import { useTheme } from '../contexts/ThemeContext'
+import { CHART_THEMES, type ChartTheme } from '../lib/chartTheme'
 import { supabase } from '../lib/supabase'
 import { cn, isRowClick } from '../lib/utils'
 import { formatBRL, formatDateBR } from '../lib/format'
@@ -77,44 +78,8 @@ import {
 import { LEAD_STATUS_LABELS, type Lead, type LeadStatus } from '../types/lead'
 
 // =============================================================================
-// Cores dos gráficos
-// Paleta categórica validada (contraste, daltonismo e separação entre cores
-// vizinhas) para o fundo branco e para o fundo escuro. A ordem é fixa: a cor
-// segue a categoria, nunca a posição no ranking.
+// Séries dos gráficos (cores em src/lib/chartTheme.ts)
 // =============================================================================
-
-type ChartTheme = {
-  series: string[]
-  /** Cor única do ranking de perdas (slot 8, não usado pelos outros gráficos). */
-  loss: string
-  /** Fatias "Outros" e "Não informado": neutras, sem competir com as categorias. */
-  neutral: string
-  grid: string
-  axis: string
-  surface: string
-  cursor: string
-}
-
-const CHART_THEMES: Record<'light' | 'dark', ChartTheme> = {
-  light: {
-    series: ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#6250d6'],
-    loss: '#e34948',
-    neutral: '#94a3b8',
-    grid: '#e2e8f0',
-    axis: '#64748b',
-    surface: '#ffffff',
-    cursor: 'rgba(148, 163, 184, 0.15)',
-  },
-  dark: {
-    series: ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#008300', '#9085e9'],
-    loss: '#e66767',
-    neutral: '#64748b',
-    grid: '#1e293b',
-    axis: '#94a3b8',
-    surface: '#0f172a',
-    cursor: 'rgba(148, 163, 184, 0.10)',
-  },
-}
 
 type TrendSeriesKey = 'received' | 'proposals' | 'closed'
 
@@ -921,48 +886,76 @@ function DistributionDonut({ data, theme, requests }: { data: RankItem[]; theme:
 
 /** Texto de tooltip com a composição do valor. */
 function valueBreakdownTitle(values: LeadValueBreakdown): string {
-  return `Locação ${formatBRL(values.rental)} · A&B ${formatBRL(values.ab)} · Hospedagem ${formatBRL(values.lodging)}`
+  return [
+    `Locação ${formatBRL(values.rental)}`,
+    `A&B ${formatBRL(values.ab)}`,
+    `Hospedagem ${formatBRL(values.lodging)}`,
+    `Equipamentos ${formatBRL(values.equipment)}`,
+    `Estacionamento ${formatBRL(values.parking)}`,
+    `Líquida total ${formatBRL(values.net)}`,
+  ].join(' · ')
 }
 
 /**
- * Componentes do orçamento. Não são categorias com identidade própria nos gráficos,
+ * Receitas além da locação. Não são categorias com identidade própria nos gráficos,
  * então usam tons da cor da marca + rótulo escrito (a cor nunca fala sozinha).
  */
-const VALUE_COMPONENTS: Array<{ key: keyof Omit<LeadValueBreakdown, 'total'>; label: string; className: string }> = [
-  { key: 'rental', label: 'Locação / Espaço', className: 'bg-brand-900 dark:bg-brand-400' },
-  { key: 'ab', label: 'A&B', className: 'bg-brand-600 dark:bg-brand-600' },
-  { key: 'lodging', label: 'Hospedagem', className: 'bg-brand-300 dark:bg-brand-800' },
+const EXTRA_COMPONENTS: Array<{ key: 'ab' | 'lodging' | 'equipment' | 'parking'; label: string; className: string }> = [
+  { key: 'ab', label: 'A&B', className: 'bg-brand-700 dark:bg-brand-500' },
+  { key: 'lodging', label: 'Hospedagem', className: 'bg-brand-500 dark:bg-brand-700' },
+  { key: 'equipment', label: 'Equipamentos', className: 'bg-brand-300 dark:bg-brand-800' },
+  { key: 'parking', label: 'Estacionamento', className: 'bg-brand-200 dark:bg-brand-900' },
 ]
 
+/** Locação de sala em destaque; líquida, bruta e as demais receitas abaixo. */
 function ValueRow({ title, subtitle, values }: { title: string; subtitle: string; values: LeadValueBreakdown }) {
-  const total = values.total
+  const extras = values.total - values.rental
   return (
     <div>
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <div>
-          <p className="text-sm font-semibold text-slate-900 dark:text-white">{title}</p>
-          <p className="text-xs text-slate-500 dark:text-slate-400">{subtitle}</p>
-        </div>
-        <p className="text-xl font-bold tabular-nums text-slate-900 dark:text-white" title={formatBRL(total)}>
-          {compactCurrencyFormatter.format(total)}
-        </p>
+      <div>
+        <p className="text-sm font-semibold text-slate-900 dark:text-white">{title}</p>
+        <p className="text-xs text-slate-500 dark:text-slate-400">{subtitle}</p>
       </div>
 
-      <div className="mt-3 flex h-2.5 gap-0.5 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800" aria-hidden="true">
-        {total > 0 &&
-          VALUE_COMPONENTS.map((component) =>
+      <div className="mt-3 flex flex-wrap items-baseline justify-between gap-2 rounded-lg bg-brand-50 px-3 py-2.5 dark:bg-brand-900/30">
+        <span className="text-xs font-semibold uppercase tracking-wide text-brand-800 dark:text-brand-200">Locação de sala</span>
+        <span className="text-xl font-bold tabular-nums text-brand-900 dark:text-white" title={formatBRL(values.rental)}>
+          {formatCurrencyCompact(values.rental)}
+        </span>
+      </div>
+
+      <dl className="mt-3 grid grid-cols-2 gap-3 text-sm">
+        <div>
+          <dt className="text-xs text-slate-500 dark:text-slate-400">Receita líquida total</dt>
+          <dd className="font-semibold tabular-nums text-slate-900 dark:text-white" title={formatBRL(values.net)}>
+            {formatCurrencyCompact(values.net)}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-xs text-slate-500 dark:text-slate-400">Receita bruta total</dt>
+          <dd className="font-semibold tabular-nums text-slate-900 dark:text-white" title={formatBRL(values.total)}>
+            {formatCurrencyCompact(values.total)}
+          </dd>
+        </div>
+      </dl>
+
+      <p className="mt-4 text-xs font-medium text-slate-600 dark:text-slate-300">
+        Demais receitas: <span className="tabular-nums">{formatBRL(extras)}</span>
+      </p>
+      <div className="mt-1.5 flex h-2 gap-0.5 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800" aria-hidden="true">
+        {extras > 0 &&
+          EXTRA_COMPONENTS.map((component) =>
             values[component.key] > 0 ? (
               <span
                 key={component.key}
                 className={cn('h-full first:rounded-l-full last:rounded-r-full', component.className)}
-                style={{ width: `${(values[component.key] / total) * 100}%` }}
+                style={{ width: `${(values[component.key] / extras) * 100}%` }}
               />
             ) : null,
           )}
       </div>
-
-      <dl className="mt-3 grid grid-cols-3 gap-3">
-        {VALUE_COMPONENTS.map((component) => (
+      <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-2 sm:grid-cols-4">
+        {EXTRA_COMPONENTS.map((component) => (
           <div key={component.key} className="min-w-0">
             <dt className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
               <span className={cn('h-2 w-2 shrink-0 rounded-sm', component.className)} aria-hidden="true" />
@@ -970,9 +963,6 @@ function ValueRow({ title, subtitle, values }: { title: string; subtitle: string
             </dt>
             <dd className="mt-0.5 text-sm font-semibold tabular-nums text-slate-900 dark:text-white" title={formatBRL(values[component.key])}>
               {compactCurrencyFormatter.format(values[component.key])}
-              <span className="block text-xs font-normal text-slate-500 dark:text-slate-400">
-                {total > 0 ? formatPercent(values[component.key] / total) : '0%'}
-              </span>
             </dd>
           </div>
         ))}
@@ -999,7 +989,7 @@ function ValueCompositionCard({
       <div className="mb-4">
         <h2 className="text-base font-semibold text-slate-900 dark:text-white">Composição dos orçamentos</h2>
         <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
-          Receita Total = Locação / Espaço + A&amp;B + Hospedagem
+          Locação de sala em destaque · Receita bruta = locação + A&amp;B + hospedagem + equipamentos + estacionamento
         </p>
       </div>
       {loading ? (
@@ -1419,11 +1409,19 @@ export default function Dashboard() {
           value={formatPercent(kpis.conversionRate)}
           detail={`${formatPercent(kpis.proposalConversionRate)} sobre propostas enviadas (${formatInteger(kpis.closed)}/${formatInteger(kpis.proposalsSent)})`}
           footer={
-            <div className="flex items-baseline justify-between gap-2">
-              <span className="text-brand-100" title="Propostas recebidas no período que fecharam">Receita fechada das propostas do período</span>
-              <span className="text-lg font-bold tabular-nums" title={formatBRL(kpis.closedValue)}>
-                {formatCurrencyCompact(kpis.closedValue)}
-              </span>
+            <div className="space-y-1" title="Propostas recebidas no período que fecharam">
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="text-brand-100">Locação de sala fechada</span>
+                <span className="text-lg font-bold tabular-nums" title={formatBRL(kpis.closedBreakdown.rental)}>
+                  {formatCurrencyCompact(kpis.closedBreakdown.rental)}
+                </span>
+              </div>
+              <div className="flex items-baseline justify-between gap-2 text-xs text-brand-100">
+                <span>Receita bruta fechada</span>
+                <span className="tabular-nums" title={formatBRL(kpis.closedValue)}>
+                  {formatCurrencyCompact(kpis.closedValue)}
+                </span>
+              </div>
             </div>
           }
         />

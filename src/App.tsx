@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { LoaderCircle, Settings2 } from 'lucide-react'
 import { AuthProvider } from './contexts/AuthContext'
 import { ThemeProvider } from './contexts/ThemeContext'
+import { ConfirmProvider } from './contexts/ConfirmContext'
 import { isSupabaseConfigured } from './lib/supabase'
 import Layout from './components/Layout'
 import PrivateRoute from './components/PrivateRoute'
@@ -22,6 +23,7 @@ const AdminPanel = lazy(() => import('./pages/AdminPanel'))
 const LeadDetails = lazy(() => import('./pages/LeadDetails'))
 const ClientList = lazy(() => import('./pages/ClientList'))
 const ClientDashboard = lazy(() => import('./pages/ClientDashboard'))
+const RevenueMap = lazy(() => import('./pages/RevenueMap'))
 const Profile = lazy(() => import('./pages/Profile'))
 
 function PageLoader() {
@@ -66,6 +68,7 @@ function SetupNotice() {
 export default function App() {
   return (
     <ThemeProvider>
+      <ConfirmProvider>
       {isSupabaseConfigured ? (
         <AuthProvider>
           <BrowserRouter basename={ROUTER_BASENAME}>
@@ -116,6 +119,14 @@ export default function App() {
                     }
                   />
                   <Route
+                    path="faturamento"
+                    element={
+                      <Suspense fallback={<PageLoader />}>
+                        <RevenueMap />
+                      </Suspense>
+                    }
+                  />
+                  <Route
                     path="perfil"
                     element={
                       <Suspense fallback={<PageLoader />}>
@@ -144,6 +155,7 @@ export default function App() {
       ) : (
         <SetupNotice />
       )}
+      </ConfirmProvider>
     </ThemeProvider>
   )
 }

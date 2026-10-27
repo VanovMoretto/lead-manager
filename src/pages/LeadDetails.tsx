@@ -5,6 +5,7 @@ import {
   ArrowRight,
   BedDouble,
   Building2,
+  Car,
   CalendarDays,
   CircleAlert,
   CircleCheck,
@@ -17,10 +18,12 @@ import {
   LoaderCircle,
   Mail,
   MapPin,
+  MonitorSpeaker,
   NotebookPen,
   Paperclip,
   Pencil,
   Phone,
+  Receipt,
   RefreshCw,
   Save,
   ShieldOff,
@@ -34,8 +37,9 @@ import type { LayoutOutletContext } from '../components/Layout'
 import StatusBadge from '../components/StatusBadge'
 import WhatsAppButton from '../components/WhatsAppButton'
 import { useAuth } from '../contexts/AuthContext'
+import { useConfirm } from '../hooks/useConfirm'
 import { formatBRL } from '../lib/format'
-import { formatLeadEventPeriod, getLeadRooms, getLeadValues, hasAnyValue } from '../lib/leadFields'
+import { NET_RATES, NET_RATES_LABEL, formatLeadEventPeriod, getLeadRooms, getLeadValues, hasAnyValue } from '../lib/leadFields'
 import {
   ATTACHMENT_ACCEPT,
   ATTACHMENT_FORMATS_LABEL,
@@ -58,6 +62,15 @@ import {
   type Lead,
   type LeadAttachment,
   type LeadStatus,
+  OPERATIONAL_STATUSES,
+  OPERATIONAL_STATUS_LABELS,
+  PAYMENT_STATUSES,
+  PAYMENT_STATUS_LABELS,
+  SURVEY_STATUSES,
+  SURVEY_STATUS_LABELS,
+  type OperationalStatus,
+  type PaymentStatus,
+  type SurveyStatus,
 } from '../types/lead'
 
 const MAX_OBSERVATIONS_LENGTH = 5000
@@ -255,11 +268,22 @@ function AttachmentItem({
   onError: (message: string) => void
 }) {
   const [busy, setBusy] = useState<'open' | 'download' | 'delete' | null>(null)
+  const confirm = useConfirm()
   const isImage = attachment.mime_type.startsWith('image/')
   const FileIcon = isImage ? ImageIcon : FileText
 
   const run = async (action: 'open' | 'download' | 'delete') => {
-    if (action === 'delete' && !window.confirm(`Excluir o anexo "${attachment.file_name}"? Essa ação é permanente.`)) return
+    if (
+      action === 'delete' &&
+      !(await confirm({
+        title: `Excluir o anexo "${attachment.file_name}"?`,
+        description: 'O arquivo é apagado do armazenamento. Essa ação é permanente.',
+        confirmLabel: 'Excluir anexo',
+        tone: 'danger',
+      }))
+    ) {
+      return
+    }
     setBusy(action)
     try {
       if (action === 'open') await openLeadAttachment(attachment)
@@ -503,6 +527,203 @@ const QUICK_ACTIONS: Array<{ status: LeadStatus; label: string; icon: LucideIcon
   },
 ]
 
+type PostEventDraft = {
+  operational_status: OperationalStatus
+  nf_rental: string
+  nf_ab: string
+  nf_parking: string
+  payment_status: PaymentStatus
+  survey_status: SurveyStatus
+}
+
+function toPostEventDraft(lead: Lead): PostEventDraft {
+  return {
+    operational_status: lead.operational_status,
+    nf_rental: lead.nf_rental ?? '',
+    nf_ab: lead.nf_ab ?? '',
+    nf_parking: lead.nf_parking ?? '',
+    payment_status: lead.payment_status,
+    survey_status: lead.survey_status,
+  }
+}
+
+const selectClassName =
+  'block w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-950 dark:text-white'
+
+/** Situação do evento, notas fiscais, pagamento e pesquisa de satisfação. */
+function PostEventCard({ lead, onSaved }: { lead: Lead; onSaved: (lead: Lead) => void }) {
+  const external = toPostEventDraft(lead)
+  const externalKey = JSON.stringify(external)
+  const [draft, setDraft] = useState(external)
+  const [syncedKey, setSyncedKey] = useState(externalKey)
+  const [saving, setSaving] = useState(false)
+  const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
+
+  // Proposta atualizada por fora (ex.: na planilha ou no formulário): acompanha se não houver alteração pendente
+  if (externalKey !== syncedKey) {
+    setSyncedKey(externalKey)
+    if (JSON.stringify(draft) === syncedKey) setDraft(external)
+  }
+
+  const dirty = JSON.stringify(draft) !== externalKey
+  const isLost = lead.status === 'perdido'
+  const update = <K extends keyof PostEventDraft>(field: K, value: PostEventDraft[K]) => {
+    setDraft((current) => ({ ...current, [field]: value }))
+    setFeedback(null)
+  }
+
+  const save = async () => {
+    if (saving || !dirty) return
+    setSaving(true)
+    setFeedback(null)
+    const payload = {
+      ...(isLost ? {} : { operational_status: draft.operational_status }),
+      nf_rental: draft.nf_rental.trim() || null,
+      nf_ab: draft.nf_ab.trim() || null,
+      nf_parking: draft.nf_parking.trim() || null,
+      payment_status: draft.payment_status,
+      survey_status: draft.survey_status,
+    }
+    try {
+      const { data, error } = await guardMutation(`lead:post-event:${lead.id}:${JSON.stringify(payload)}`, async () =>
+        supabase.from('leads').update(payload).eq('id', lead.id).select().single(),
+      )
+      if (error || !data) {
+        setFeedback({
+          type: 'error',
+          message:
+            error?.code === 'PGRST204' || error?.code === '42703'
+              ? 'O banco de dados está desatualizado. Rode a migração 012 no SQL Editor do Supabase.'
+              : 'Não foi possível salvar. Verifique sua conexão e tente novamente.',
+        })
+        return
+      }
+      onSaved(data)
+      setFeedback({ type: 'success', message: 'Faturamento salvo.' })
+    } catch (guardError) {
+      setFeedback({ type: 'error', message: guardError instanceof RateLimitError ? guardError.message : 'Não foi possível salvar.' })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const label = 'mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400'
+  const input =
+    'block w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white'
+
+  return (
+    <Card icon={Receipt} title="Faturamento, NFs e Pós-Evento">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <div>
+          <label htmlFor="post-operational" className={label}>
+            Situação do evento
+          </label>
+          <select
+            id="post-operational"
+            value={draft.operational_status}
+            disabled={isLost}
+            onChange={(event) => update('operational_status', event.target.value as OperationalStatus)}
+            className={selectClassName}
+          >
+            {OPERATIONAL_STATUSES.map((value) => (
+              <option key={value} value={value}>
+                {OPERATIONAL_STATUS_LABELS[value]}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label htmlFor="post-payment" className={label}>
+            Pagamento
+          </label>
+          <select
+            id="post-payment"
+            value={draft.payment_status}
+            onChange={(event) => update('payment_status', event.target.value as PaymentStatus)}
+            className={selectClassName}
+          >
+            {PAYMENT_STATUSES.map((value) => (
+              <option key={value} value={value}>
+                {PAYMENT_STATUS_LABELS[value]}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label htmlFor="post-survey" className={label}>
+            Pesquisa de satisfação
+          </label>
+          <select
+            id="post-survey"
+            value={draft.survey_status}
+            onChange={(event) => update('survey_status', event.target.value as SurveyStatus)}
+            className={selectClassName}
+          >
+            {SURVEY_STATUSES.map((value) => (
+              <option key={value} value={value}>
+                {SURVEY_STATUS_LABELS[value]}
+              </option>
+            ))}
+          </select>
+        </div>
+        {(
+          [
+            ['nf_rental', 'NF Locação'],
+            ['nf_ab', 'NF A&B'],
+            ['nf_parking', 'NF Estacionamento'],
+          ] as const
+        ).map(([field, text]) => (
+          <div key={field}>
+            <label htmlFor={`post-${field}`} className={label}>
+              {text}
+            </label>
+            <input
+              id={`post-${field}`}
+              type="text"
+              maxLength={50}
+              autoComplete="off"
+              placeholder="Nº da nota"
+              value={draft[field]}
+              onChange={(event) => update(field, event.target.value)}
+              className={input}
+            />
+          </div>
+        ))}
+      </div>
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+        <p className="text-xs text-slate-500 dark:text-slate-400">
+          {isLost
+            ? 'Proposta perdida: não entra na planilha de faturamento.'
+            : 'Confirmado ou Realizado fecha a proposta; À confirmar volta para Em aberto.'}
+        </p>
+        <div className="flex items-center gap-3">
+          {feedback && (
+            <span
+              role={feedback.type === 'error' ? 'alert' : 'status'}
+              className={cn(
+                'flex items-center gap-1 text-xs font-medium',
+                feedback.type === 'error' ? 'text-red-600 dark:text-red-400' : 'text-emerald-700 dark:text-emerald-400',
+              )}
+            >
+              {feedback.type === 'error' ? <CircleAlert className="h-3.5 w-3.5" aria-hidden="true" /> : <CircleCheck className="h-3.5 w-3.5" aria-hidden="true" />}
+              {feedback.message}
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={() => void save()}
+            disabled={!dirty || saving}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {saving ? <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}
+            Salvar
+          </button>
+        </div>
+      </div>
+    </Card>
+  )
+}
+
 /** Link para a página consolidada do cliente (empresa ou pessoa física) dono desta proposta. */
 function ClientLink({ clientId }: { clientId: string }) {
   const [client, setClient] = useState<Pick<Client, 'id' | 'name' | 'client_type'> | null>(null)
@@ -617,9 +838,11 @@ export default function LeadDetails() {
   const period = formatLeadEventPeriod(lead)
   const proposalSent = lead.proposal_sent || lead.status === 'fechado'
   const valueParts = [
-    { label: 'Locação / Espaço', icon: MapPin, value: values.rental, show: lead.proposed_value !== null },
-    { label: 'A&B', icon: UtensilsCrossed, value: values.ab, show: lead.has_ab || values.ab > 0 },
-    { label: 'Hospedagem', icon: BedDouble, value: values.lodging, show: lead.has_lodging || values.lodging > 0 },
+    { label: 'Locação de sala', icon: MapPin, value: values.rental, rate: NET_RATES.rental, show: lead.proposed_value !== null },
+    { label: 'Hospedagem', icon: BedDouble, value: values.lodging, rate: NET_RATES.lodging, show: lead.has_lodging || values.lodging > 0 },
+    { label: 'Estacionamento', icon: Car, value: values.parking, rate: NET_RATES.parking, show: lead.has_parking || values.parking > 0 },
+    { label: 'Equipamentos / Extras', icon: MonitorSpeaker, value: values.equipment, rate: NET_RATES.equipment, show: lead.has_equipment || values.equipment > 0 },
+    { label: 'A&B', icon: UtensilsCrossed, value: values.ab, rate: NET_RATES.ab, show: lead.has_ab || values.ab > 0 },
   ].filter((part) => part.show)
 
   return (
@@ -698,8 +921,10 @@ export default function LeadDetails() {
 
             <Card icon={CalendarDays} title="Evento">
               <dl className="space-y-3">
+                {lead.event_name && <InfoRow label="Nome do evento">{lead.event_name}</InfoRow>}
                 <InfoRow label="Data">{period ?? (lead.date_notes ? `Sem data definida (${lead.date_notes})` : 'Sem data definida')}</InfoRow>
                 {lead.is_date_flexible && <InfoRow label="Flexibilidade">Data flexível</InfoRow>}
+                <InfoRow label="PAX">{lead.pax !== null ? `${lead.pax.toLocaleString('pt-BR')} pessoas` : empty}</InfoRow>
                 <InfoRow label="Salas/Salões de interesse">
                   {rooms.length > 0 ? (
                     <span className="mt-1 flex flex-wrap gap-1">
@@ -730,20 +955,40 @@ export default function LeadDetails() {
                   </div>
                 )}
               </dl>
-              <div className="rounded-lg border border-brand-100 bg-brand-50/60 p-4 md:min-w-[16rem] dark:border-brand-900/60 dark:bg-brand-950/30">
-                <p className="text-xs font-semibold uppercase tracking-wide text-brand-800 dark:text-brand-200">Receita Total</p>
-                <p className="mt-1 text-2xl font-bold tabular-nums text-slate-900 dark:text-white">
-                  {hasAnyValue(lead) ? formatBRL(values.total) : '—'}
-                </p>
+              <div className="overflow-hidden rounded-lg border border-brand-100 md:min-w-[19rem] dark:border-brand-900/60">
+                <div className="bg-gradient-to-br from-brand-900 to-brand-600 p-4 text-white">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-brand-100">Locação de sala</p>
+                  <p className="mt-1 text-2xl font-bold tabular-nums">{lead.proposed_value !== null ? formatBRL(values.rental) : '—'}</p>
+                </div>
+                <dl className="divide-y divide-slate-100 bg-brand-50/40 px-4 text-sm dark:divide-slate-800 dark:bg-brand-950/20">
+                  <div className="flex items-baseline justify-between gap-3 py-2">
+                    <dt>
+                      <span className="font-medium text-slate-800 dark:text-slate-100">Receita líquida total</span>
+                      <span className="block text-[11px] text-slate-500 dark:text-slate-400">{NET_RATES_LABEL}</span>
+                    </dt>
+                    <dd className="font-semibold tabular-nums text-slate-900 dark:text-white">{hasAnyValue(lead) ? formatBRL(values.net) : '—'}</dd>
+                  </div>
+                  <div className="flex items-baseline justify-between gap-3 py-2">
+                    <dt className="font-medium text-slate-800 dark:text-slate-100">Receita bruta total</dt>
+                    <dd className="font-semibold tabular-nums text-slate-900 dark:text-white">{hasAnyValue(lead) ? formatBRL(values.total) : '—'}</dd>
+                  </div>
+                </dl>
                 {valueParts.length > 0 && (
-                  <ul className="mt-3 space-y-1 text-sm">
-                    {valueParts.map(({ label, icon: Icon, value }) => (
-                      <li key={label} className="flex items-center justify-between gap-4 text-slate-600 dark:text-slate-300">
+                  <ul className="space-y-1.5 border-t border-slate-100 px-4 py-3 text-sm dark:border-slate-800">
+                    {valueParts.map(({ label, icon: Icon, value, rate }) => (
+                      <li key={label} className="flex items-start justify-between gap-4 text-slate-600 dark:text-slate-300">
                         <span className="flex items-center gap-1.5">
                           <Icon className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" />
                           {label}
                         </span>
-                        <span className="tabular-nums">{formatBRL(value)}</span>
+                        <span className="text-right tabular-nums">
+                          {formatBRL(value)}
+                          {rate < 1 && (
+                            <span className="block text-[11px] text-slate-400 dark:text-slate-500">
+                              {Math.round(rate * 100)}%: {formatBRL(Math.round(value * rate * 100) / 100)}
+                            </span>
+                          )}
+                        </span>
                       </li>
                     ))}
                   </ul>
@@ -751,6 +996,8 @@ export default function LeadDetails() {
               </div>
             </div>
           </Card>
+
+          <PostEventCard key={`post-${lead.id}`} lead={lead} onSaved={handleObservationsSaved} />
 
           <ObservationsCard key={lead.id} lead={lead} onSaved={handleObservationsSaved} />
         </div>
