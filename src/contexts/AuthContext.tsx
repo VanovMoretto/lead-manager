@@ -1,14 +1,26 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { AuthError, Session, User } from '@supabase/supabase-js'
 import { isPasswordRecoveryRedirect, isRecoverySession, setRememberSession, supabase } from '../lib/supabase'
+import { isDemoMode } from '../lib/demoMode'
 import type { UserProfile } from '../types/lead'
 
 type ActionResult = { error: string | null }
 
-/** Domínio dos logins da equipe: quem digita só o usuário (ex.: nome.sobrenome) entra com este sufixo. */
-export const DEFAULT_EMAIL_DOMAIN = '@swanhoteis.com.br'
+/** "empresa.com.br" ou "@empresa.com.br" -> "@empresa.com.br". */
+function toEmailDomain(value: string): string {
+  return value.startsWith('@') ? value : `@${value}`
+}
 
-/** "Nome.Sobrenome " -> "nome.sobrenome@swanhoteis.com.br"; um e-mail completo é mantido como foi digitado. */
+/**
+ * Domínio dos logins da equipe: quem digita só o usuário (ex.: nome.sobrenome) entra com este sufixo.
+ * Definido por `VITE_DEFAULT_EMAIL_DOMAIN`; no Modo Demonstração, o padrão é o domínio das contas fictícias.
+ */
+// oxlint-disable-next-line react/only-export-components
+export const DEFAULT_EMAIL_DOMAIN = toEmailDomain(
+  import.meta.env.VITE_DEFAULT_EMAIL_DOMAIN?.trim().toLowerCase() || (isDemoMode ? '@portfolio.demo' : '@empresa.com.br'),
+)
+
+/** "Nome.Sobrenome " -> "nome.sobrenome@empresa.com.br"; um e-mail completo é mantido como foi digitado. */
 function toLoginEmail(identifier: string): string {
   const value = identifier.trim().toLowerCase()
   return value.includes('@') ? value : `${value}${DEFAULT_EMAIL_DOMAIN}`

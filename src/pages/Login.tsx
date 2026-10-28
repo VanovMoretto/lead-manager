@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState, type FormEvent } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { CircleAlert, CircleCheck, Eye, EyeOff, LoaderCircle, Lock, ShieldAlert, User } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
@@ -18,6 +18,9 @@ import {
   registerResetRequest,
   resetCooldownLeft,
 } from '../lib/loginThrottle'
+
+// Acesso de 1 clique do Modo Demonstração (comparação direta com a variável: fora dele, nem entra no build)
+const DemoLoginPanel = import.meta.env.VITE_DEMO_MODE === 'true' ? lazy(() => import('../components/DemoLoginPanel')) : null
 
 /**
  * "Lembrar meu usuário": guarda só o usuário, nunca a senha. A senha fica a cargo do
@@ -214,6 +217,11 @@ export default function Login() {
           <AppLogo size="md" className="mb-8 lg:hidden" />
 
           <div className="rounded-2xl border border-slate-200 bg-white p-8 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+            {DemoLoginPanel && (
+              <Suspense fallback={<div className="mb-8 h-40 animate-pulse rounded-xl bg-brand-50 dark:bg-brand-950/40" />}>
+                <DemoLoginPanel redirectTo={redirectTo} disabled={busy} />
+              </Suspense>
+            )}
             <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Entrar</h2>
             <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Use seu usuário e senha cadastrados.</p>
 

@@ -47,13 +47,31 @@ cp .env.example .env
 ```env
 VITE_SUPABASE_URL=https://SEU-PROJETO.supabase.co
 VITE_SUPABASE_ANON_KEY=sua-chave-anon-ou-publishable
+VITE_DEFAULT_EMAIL_DOMAIN=@empresa.com.br
+VITE_DEMO_MODE=false
 ```
+
+`VITE_DEFAULT_EMAIL_DOMAIN` é o domínio completado no login quando a pessoa digita só o usuário (padrão: `@empresa.com.br`).
 
 Inicie o servidor de desenvolvimento:
 
 ```bash
 npm run dev
 ```
+
+## Modo Portfólio / Demonstração
+
+Com `VITE_DEMO_MODE=true`, o app roda sem Supabase (as chaves podem ficar vazias), com uma base fictícia guardada só no `sessionStorage` da aba:
+
+- Tela de login com acesso de 1 clique como **Admin** ou **Comercial** (senha das contas: `demo1234`; `estagio` mostra o aviso de acesso desativado).
+- ~28 propostas de empresas e pessoas físicas fictícias, distribuídas nos últimos meses e no mês atual (fechadas, em aberto com alertas de follow-up e perdidas), salas, meios de prospecção, motivos de perda, usuários e anexos de exemplo.
+- Cadastro, edição, exclusão, anexos, fotos de perfil e exportações funcionam localmente. O botão **Restaurar dados**, no menu, volta à base original.
+
+```bash
+VITE_DEMO_MODE=true npm run dev
+```
+
+Sem `VITE_DEMO_MODE=true`, nada da demonstração entra no build e o app usa somente o Supabase configurado.
 
 ## Banco de dados
 
@@ -68,7 +86,7 @@ No SQL Editor do Supabase:
 
 Os usuários são **criados no Supabase**; o acesso e a permissão de cada um são ajustados no Painel Admin.
 
-- **Criar usuário**: Authentication → Users → Add user, com o e-mail `nome.sobrenome@swanhoteis.com.br`. No login, basta digitar `nome.sobrenome`: o app completa o domínio. Quem usa outro domínio digita o e-mail completo. O perfil é criado automaticamente como usuário comum ativo.
+- **Criar usuário**: Authentication → Users → Add user, com o e-mail `nome.sobrenome@empresa.com.br`. No login, basta digitar `nome.sobrenome`: o app completa o domínio definido em `VITE_DEFAULT_EMAIL_DOMAIN`. Quem usa outro domínio digita o e-mail completo. O perfil é criado automaticamente como usuário comum ativo.
 - **Ativar, desativar ou tornar ADMIN**: Painel Admin → Usuários. Usuário desativado é desconectado e não lê nem grava nenhum dado (a regra está no banco). Ninguém altera o próprio acesso, o que evita ficar sem administrador.
 - **Mudar e-mail ou usuário**: edite o e-mail do usuário em Authentication → Users. O nome exibido no app é a parte antes do `@`.
 - **Remover de vez**: exclua o usuário em Authentication → Users (o perfil sai junto).
@@ -133,7 +151,7 @@ src/
   components/   Layout, formulário de lead e componentes compartilhados
   contexts/     Autenticação e tema
   hooks/        Opções do Painel Admin, reconhecimento de cliente, empresas e fotos de perfil
-  lib/          Cliente Supabase, consultas, formatação, exportações, anexos e WhatsApp
+  lib/          Cliente Supabase, consultas, formatação, exportações, anexos, WhatsApp e Modo Demonstração (demoStore/demoSeed)
   pages/        Login, nova senha, Dashboard, Consultar Propostas, Detalhes da proposta, Consultar Leads, Dashboard do cliente, Perfil e Painel Admin
   types/        Tipos do domínio e do banco
 supabase/
