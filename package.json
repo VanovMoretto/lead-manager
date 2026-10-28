@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:demo": "vite --mode demo",
     "build": "tsc -b && vite build",
+    "build:demo": "tsc -b && vite build --mode demo",
     "lint": "oxlint",
     "preview": "vite preview",
     "build:pages": "tsc -b && vite build --base=/lead-manager/ && node -e \"require('fs').copyFileSync('dist/index.html','dist/404.html')\"",
