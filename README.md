@@ -68,7 +68,7 @@ Com `VITE_DEMO_MODE=true`, o app roda sem Supabase (as chaves podem ficar vazias
 - Cadastro, edição, exclusão, anexos, fotos de perfil e exportações funcionam localmente. O botão **Restaurar dados**, no menu, volta à base original.
 
 ```bash
-VITE_DEMO_MODE=true npm run dev
+npm run dev:demo
 ```
 
 Sem `VITE_DEMO_MODE=true`, nada da demonstração entra no build e o app usa somente o Supabase configurado.
@@ -111,7 +111,9 @@ where email = 'admin@suaempresa.com.br';
 | Comando | Descrição |
 | --- | --- |
 | `npm run dev` | Servidor de desenvolvimento |
+| `npm run dev:demo` | Servidor de desenvolvimento no Modo Demonstração (usa `.env.demo`) |
 | `npm run build` | Verificação de tipos e build de produção |
+| `npm run build:demo` | Build do Modo Demonstração (portfólio) |
 | `npm run lint` | Análise estática do código |
 | `npm run preview` | Pré-visualização do build |
 | `npm run deploy` | Build para o GitHub Pages e publicação na branch `gh-pages` |
@@ -128,7 +130,11 @@ O build é gerado com o prefixo `/lead-manager/` e publicado na branch `gh-pages
 
 ### Vercel, Netlify ou Cloudflare Pages
 
-Use `npm run build` com a pasta `dist`. Os arquivos `vercel.json` e `public/_redirects` já fazem o redirecionamento de rotas para o `index.html`. Configure `VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY` nas variáveis de ambiente da plataforma.
+Use `npm run build` com a pasta `dist`. Os arquivos `vercel.json` e `public/_redirects` já fazem o redirecionamento de rotas para o `index.html`. Configure `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` e `VITE_DEFAULT_EMAIL_DOMAIN` nas variáveis de ambiente da plataforma.
+
+### Versão de portfólio (Vercel)
+
+Crie um projeto separado na Vercel apontando para o mesmo repositório, com **Build Command** `npm run build:demo` e **Output Directory** `dist` (Framework Preset: Vite). Não cadastre as chaves do Supabase nesse projeto: o build do demo usa só o `.env.demo` e não acessa nenhum banco.
 
 ## Segurança
 
