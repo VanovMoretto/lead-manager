@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import { Link, Navigate, useNavigate, useOutletContext, useParams } from 'react-router-dom'
 import {
   ArrowLeft,
   BadgeCheck,
   BedDouble,
+  ChartColumn,
   CircleAlert,
   Crown,
   ExternalLink,
@@ -29,6 +30,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import type { LayoutOutletContext } from '../components/Layout'
+import ClientMetricsPanel, { type ClientMetricsView } from '../components/ClientMetricsPanel'
 import ClientTypeBadge from '../components/ClientTypeBadge'
 import ContactFormModal from '../components/ContactFormModal'
 import StatusBadge from '../components/StatusBadge'
@@ -119,18 +121,52 @@ function yearOf(iso: string): number {
 // Componentes de apoio
 // =============================================================================
 
-function KpiCard({ icon: Icon, label, value, accent, children }: { icon: LucideIcon; label: string; value: string; accent: string; children?: ReactNode }) {
-  return (
-    <div className={cn(cardClassName, 'p-5')}>
+function KpiCard({
+  icon: Icon,
+  label,
+  value,
+  accent,
+  onClick,
+  children,
+}: {
+  icon: LucideIcon
+  label: string
+  value: string
+  accent: string
+  onClick?: () => void
+  children?: ReactNode
+}) {
+  const content = (
+    <>
       <div className="flex items-center gap-2">
         <span className={cn('flex h-8 w-8 items-center justify-center rounded-lg', accent)}>
           <Icon className="h-4 w-4" aria-hidden="true" />
         </span>
         <p className="text-sm font-medium text-slate-500 dark:text-slate-400">{label}</p>
+        {onClick && (
+          <span className="ml-auto inline-flex items-center gap-1 text-xs font-semibold text-brand-700 opacity-70 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 dark:text-brand-300">
+            <ChartColumn className="h-3.5 w-3.5" aria-hidden="true" />
+            <span className="hidden sm:inline">Ver gráficos</span>
+          </span>
+        )}
       </div>
       <p className="mt-3 text-2xl font-bold tracking-tight text-slate-900 tabular-nums dark:text-white">{value}</p>
       {children && <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">{children}</div>}
-    </div>
+    </>
+  )
+  if (!onClick) return <div className={cn(cardClassName, 'p-5')}>{content}</div>
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-haspopup="dialog"
+      className={cn(
+        cardClassName,
+        'group p-5 text-left transition-all hover:-translate-y-0.5 hover:border-brand-300 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 dark:hover:border-brand-700',
+      )}
+    >
+      {content}
+    </button>
   )
 }
 
@@ -780,6 +816,13 @@ export default function ClientDashboard() {
   const [retryCount, setRetryCount] = useState(0)
   const [contactModal, setContactModal] = useState<{ contact: ClientContact | null } | null>(null)
   const [branchModal, setBranchModal] = useState(false)
+  const [metricsOpen, setMetricsOpen] = useState(false)
+  const [metricsView, setMetricsView] = useState<ClientMetricsView>('revenue')
+  const closeMetrics = useCallback(() => setMetricsOpen(false), [])
+  const openMetrics = (view: ClientMetricsView) => {
+    setMetricsView(view)
+    setMetricsOpen(true)
+  }
 
   const key = `${clientId}|${leadsVersion}|${retryCount}`
   const [result, setResult] = useState<LoadResult | null>(null)
@@ -952,6 +995,7 @@ export default function ClientDashboard() {
   return (
     <div className="space-y-6">
       {backLink}
+      <ClientMetricsPanel clientName={client.name} leads={leads} open={metricsOpen} view={metricsView} onChangeView={setMetricsView} onClose={closeMetrics} />
 
       {/* Cabeçalho */}
       <div className={cn(cardClassName, 'flex flex-col gap-4 p-5 lg:flex-row lg:items-start lg:justify-between')}>
@@ -991,7 +1035,7 @@ export default function ClientDashboard() {
 
       {/* KPIs do cliente */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <KpiCard icon={Wallet} label="Receita total gerada (LTV)" value={formatBRL(summary.ltv)} accent="bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
+        <KpiCard icon={Wallet} label="Receita total gerada (LTV)" value={formatBRL(summary.ltv)} accent="bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300" onClick={() => openMetrics('revenue')}>
           <div className="space-y-0.5">
             <p className="flex items-center gap-1.5">
               <MapPin className="h-3 w-3" aria-hidden="true" /> Locação {formatBRL(summary.rental)}
@@ -1004,10 +1048,10 @@ export default function ClientDashboard() {
             </p>
           </div>
         </KpiCard>
-        <KpiCard icon={TrendingUp} label="Em negociação (pipeline)" value={formatBRL(summary.pipeline)} accent="bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+        <KpiCard icon={TrendingUp} label="Em negociação (pipeline)" value={formatBRL(summary.pipeline)} accent="bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300" onClick={() => openMetrics('pipeline')}>
           {summary.openCount} {summary.openCount === 1 ? 'proposta em aberto' : 'propostas em aberto'}
         </KpiCard>
-        <KpiCard icon={Target} label="Conversão do cliente" value={formatPercent(summary.conversion)} accent="bg-brand-50 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300">
+        <KpiCard icon={Target} label="Conversão do cliente" value={formatPercent(summary.conversion)} accent="bg-brand-50 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300" onClick={() => openMetrics('conversion')}>
           {summary.total} {summary.total === 1 ? 'solicitação' : 'solicitações'} · {summary.sent} {summary.sent === 1 ? 'enviada' : 'enviadas'} ·{' '}
           {summary.closedCount} {summary.closedCount === 1 ? 'fechada' : 'fechadas'}
         </KpiCard>

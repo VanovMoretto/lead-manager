@@ -556,6 +556,16 @@ export type Database = {
       }
     }
     Functions: {
+      /** ADMIN corrige o nome de uma opção (e das propostas que usam o nome antigo). */
+      admin_rename_setting_option: {
+        Args: { p_option_id: UUID; p_label: string }
+        Returns: AppSettingOption
+      }
+      /** ADMIN exclui uma opção; com substituta, as propostas passam a usar a outra. Retorna quantas mudaram. */
+      admin_delete_setting_option: {
+        Args: { p_option_id: UUID; p_replacement_id?: UUID }
+        Returns: number
+      }
       /** O usuário logado tem papel ADMIN? */
       is_admin: { Args: Record<string, never>; Returns: boolean }
       /** ADMIN ativa/desativa um usuário ou muda o papel (campo omitido = mantém). */

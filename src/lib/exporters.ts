@@ -675,7 +675,6 @@ export function exportRevenueToXlsx(leads: RevenueLead[], periodLabel: string): 
 
   const grossRow = blank()
   grossRow[0] = 'FATURAMENTO BRUTO'
-  grossRow[7] = totals.gross.rental
   grossRow[8] = totals.gross.equipment
   grossRow[10] = totals.gross.ab
   grossRow[12] = totals.gross.lodging
@@ -787,7 +786,7 @@ export function exportRevenueToPdf(leads: RevenueLead[], periodLabel: string): v
               `${leads.length} eventos`,
               '',
               '',
-              formatBRL(totals.gross.rental),
+              '',
               formatBRL(totals.gross.equipment),
               formatBRL(totals.gross.ab),
               formatBRL(totals.gross.lodging),

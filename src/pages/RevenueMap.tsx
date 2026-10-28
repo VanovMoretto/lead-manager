@@ -18,7 +18,9 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react'
+import HorizontalScrollArea from '../components/HorizontalScrollArea'
 import PageHeader from '../components/PageHeader'
+import ValueDetails from '../components/ValueDetails'
 import type { LayoutOutletContext } from '../components/Layout'
 import { useTheme } from '../contexts/ThemeContext'
 import { CHART_THEMES, type ChartTheme } from '../lib/chartTheme'
@@ -43,6 +45,7 @@ import {
 } from '../lib/revenue'
 import { supabase } from '../lib/supabase'
 import { cn } from '../lib/utils'
+import { grossDetailRows, netDetailRows } from '../lib/valueDetails'
 import {
   OPERATIONAL_STATUSES,
   OPERATIONAL_STATUS_LABELS,
@@ -152,7 +155,7 @@ function Kpi({
   return (
     <div
       className={cn(
-        'rounded-xl p-5 shadow-sm',
+        'h-full rounded-xl p-5 shadow-sm',
         highlight
           ? 'bg-gradient-to-br from-brand-900 to-brand-600 text-white'
           : 'border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900',
@@ -453,6 +456,11 @@ export default function RevenueMap() {
   const yearLeads = useMemo(() => leads.filter((lead) => inPeriod(lead, year, null)), [leads, year])
   const periodLeads = useMemo(() => leads.filter((lead) => inPeriod(lead, year, month)), [leads, year, month])
   const summary = useMemo(() => summarizeRevenue(periodLeads), [periodLeads])
+  const rentalBySituation = useMemo(() => {
+    const totals: Record<OperationalStatus, number> = { realizado: 0, confirmado: 0, a_confirmar: 0 }
+    for (const lead of periodLeads) totals[revenueSituation(lead)] += getLeadValues(lead).rental
+    return totals
+  }, [periodLeads])
 
   // Mês anterior (janeiro compara com dezembro do ano anterior)
   const previousRental = useMemo(() => {
@@ -604,38 +612,68 @@ export default function RevenueMap() {
         </div>
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <Kpi icon={Target} title="Locação de salas" value={formatBRL(summary.confirmed.rental)} highlight>
-            <p>Confirmado + Realizado</p>
-            <p>
-              À confirmar: <strong className="font-semibold text-white">{formatBRL(summary.pending.rental)}</strong>
-            </p>
-            {month !== null && (
-              <p className="flex items-center gap-1">
-                {variation === null ? (
-                  'Sem base no mês anterior'
-                ) : (
-                  <>
-                    {variation >= 0 ? <TrendingUp className="h-3.5 w-3.5" aria-hidden="true" /> : <TrendingDown className="h-3.5 w-3.5" aria-hidden="true" />}
-                    <strong className="font-semibold text-white">
-                      {variation >= 0 ? '+' : ''}
-                      {(variation * 100).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%
-                    </strong>{' '}
-                    vs. {MONTH_LONG_LABELS[(month + 10) % 12].toLowerCase()}
-                  </>
-                )}
+          <ValueDetails
+            title="Locação de salas por situação"
+            rows={[
+              { label: 'Eventos realizados', value: rentalBySituation.realizado },
+              { label: 'Eventos confirmados', value: rentalBySituation.confirmado },
+            ]}
+            total={{ label: 'Confirmado + Realizado', value: summary.confirmed.rental }}
+            extraRows={[{ label: 'Eventos à confirmar', value: rentalBySituation.a_confirmar }]}
+            footnote="À confirmar não entra no total."
+            dark
+            className="rounded-xl"
+          >
+            <Kpi icon={Target} title="Locação de salas" value={formatBRL(summary.confirmed.rental)} highlight>
+              <p>Confirmado + Realizado</p>
+              <p>
+                À confirmar: <strong className="font-semibold text-white">{formatBRL(summary.pending.rental)}</strong>
               </p>
-            )}
-          </Kpi>
-          <Kpi icon={Hotel} title="Receita líquida total" value={formatBRL(summary.confirmed.net)}>
-            <p>
-              <strong className="font-semibold text-slate-700 dark:text-slate-200">{formatBRL(summary.confirmed.net - summary.confirmed.rental)}</strong> além da locação
-            </p>
-            <p>100% Loc./Hosp. · 50% Estac. · 15% Equip. · 6% A&amp;B</p>
-          </Kpi>
-          <Kpi icon={BarChart3} title="Receita bruta total" value={formatBRL(summary.confirmed.total)}>
-            <p>Soma integral de todos os serviços</p>
-            <p>À confirmar: {formatBRL(summary.pending.total)}</p>
-          </Kpi>
+              {month !== null && (
+                <p className="flex items-center gap-1">
+                  {variation === null ? (
+                    'Sem base no mês anterior'
+                  ) : (
+                    <>
+                      {variation >= 0 ? <TrendingUp className="h-3.5 w-3.5" aria-hidden="true" /> : <TrendingDown className="h-3.5 w-3.5" aria-hidden="true" />}
+                      <strong className="font-semibold text-white">
+                        {variation >= 0 ? '+' : ''}
+                        {(variation * 100).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%
+                      </strong>{' '}
+                      vs. {MONTH_LONG_LABELS[(month + 10) % 12].toLowerCase()}
+                    </>
+                  )}
+                </p>
+              )}
+            </Kpi>
+          </ValueDetails>
+          <ValueDetails
+            title="Composição da receita líquida"
+            rows={netDetailRows(summary.confirmed)}
+            total={{ label: 'Receita líquida total', value: summary.confirmed.net }}
+            footnote="Eventos confirmados e realizados."
+            className="rounded-xl"
+          >
+            <Kpi icon={Hotel} title="Receita líquida total" value={formatBRL(summary.confirmed.net)}>
+              <p>
+                <strong className="font-semibold text-slate-700 dark:text-slate-200">{formatBRL(summary.confirmed.net - summary.confirmed.rental)}</strong> além da locação
+              </p>
+              <p>100% Loc./Hosp. · 50% Estac. · 15% Equip. · 6% A&amp;B</p>
+            </Kpi>
+          </ValueDetails>
+          <ValueDetails
+            title="Composição da receita bruta"
+            rows={grossDetailRows(summary.confirmed)}
+            total={{ label: 'Receita bruta total', value: summary.confirmed.total }}
+            extraRows={[{ label: 'À confirmar', value: summary.pending.total }]}
+            footnote="Eventos confirmados e realizados."
+            className="rounded-xl"
+          >
+            <Kpi icon={BarChart3} title="Receita bruta total" value={formatBRL(summary.confirmed.total)}>
+              <p>Soma integral de todos os serviços</p>
+              <p>À confirmar: {formatBRL(summary.pending.total)}</p>
+            </Kpi>
+          </ValueDetails>
           <Kpi icon={Users} title="Eventos & Público (PAX)" value={`${integer.format(summary.realizedCount + summary.confirmedCount)} eventos`}>
             <p>
               {integer.format(summary.realizedCount)} realizados · {integer.format(summary.confirmedCount)} confirmados ·{' '}
@@ -739,9 +777,9 @@ export default function RevenueMap() {
         ) : tableRows.length === 0 ? (
           <p className="px-5 py-14 text-center text-sm text-slate-500 dark:text-slate-400">Nenhum evento em {periodLabel.toLowerCase()} com esse filtro.</p>
         ) : (
-          <div className="overflow-x-auto">
+          <HorizontalScrollArea label="Planilha de eventos">
             <table className="w-full min-w-[1700px] text-left text-sm">
-              <thead className="whitespace-nowrap border-b border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950/50">
+              <thead className="sticky top-0 z-10 whitespace-nowrap bg-slate-50 shadow-[inset_0_-1px_0_theme(colors.slate.200)] dark:bg-slate-950 dark:shadow-[inset_0_-1px_0_theme(colors.slate.800)]">
                 <tr>
                   <th scope="col" className={cn(headCell, 'pl-5')}>Data</th>
                   <th scope="col" className={headCell}>Evento</th>
@@ -859,7 +897,7 @@ export default function RevenueMap() {
                   <td colSpan={6} className={cn(footLabel, 'text-slate-700 dark:text-slate-200')}>
                     Faturamento bruto · {tableRows.length} {tableRows.length === 1 ? 'evento' : 'eventos'}
                   </td>
-                  <td className="bg-brand-50 px-3 py-2.5 text-right font-bold tabular-nums text-brand-900 dark:bg-brand-900/30 dark:text-white">{formatBRL(gross.rental)}</td>
+                  <td className="bg-brand-50 dark:bg-brand-900/30" />
                   <td className="px-3 py-2.5 text-right font-semibold tabular-nums">{formatBRL(gross.equipment)}</td>
                   <td className="px-3 py-2.5 text-right font-semibold tabular-nums">{formatBRL(gross.ab)}</td>
                   <td className="px-3 py-2.5 text-right font-semibold tabular-nums">{formatBRL(gross.lodging)}</td>
@@ -892,7 +930,7 @@ export default function RevenueMap() {
                 </tr>
               </tfoot>
             </table>
-          </div>
+          </HorizontalScrollArea>
         )}
       </section>
     </>
