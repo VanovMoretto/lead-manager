@@ -23,7 +23,7 @@ function translateError(error: PostgrestError): string {
   return 'Não foi possível salvar a alteração. Tente novamente.'
 }
 
-/** "nome.sobrenome@swanhoteis.com.br" -> "nome.sobrenome"; outros domínios aparecem completos. */
+/** "nome.sobrenome@empresa.com.br" -> "nome.sobrenome"; outros domínios aparecem completos. */
 function displayName(profile: UserProfile): string {
   const email = profile.email ?? ''
   return email.endsWith(DEFAULT_EMAIL_DOMAIN) ? email.slice(0, -DEFAULT_EMAIL_DOMAIN.length) : email || 'Sem e-mail'

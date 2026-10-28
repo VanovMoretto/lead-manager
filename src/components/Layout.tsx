@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
   Building2,
@@ -22,6 +22,9 @@ import type { RecurringClientMatch } from '../hooks/useRecurringClient'
 import LeadFormModal, { type LeadFormMode } from './LeadFormModal'
 import ThemeToggle from './ThemeToggle'
 import UserAvatar from './UserAvatar'
+
+// Só existe no Modo Demonstração (comparação direta com a variável: fora dele, nem entra no build)
+const DemoModeBadge = import.meta.env.VITE_DEMO_MODE === 'true' ? lazy(() => import('./DemoModeBadge')) : null
 
 /** Disponível nas páginas via `useOutletContext<LayoutOutletContext>()`. */
 export type LayoutOutletContext = {
@@ -133,6 +136,12 @@ function SidebarContent({ onNewLead, onNavigate }: SidebarContentProps) {
           </NavLink>
         ))}
       </nav>
+
+      {DemoModeBadge && (
+        <Suspense fallback={null}>
+          <DemoModeBadge className="mx-3 mb-3" />
+        </Suspense>
+      )}
 
       <div className="space-y-1 border-t border-slate-200 px-3 py-4 dark:border-slate-800">
         {username && (
@@ -261,6 +270,11 @@ export default function Layout() {
           <Brand />
         </div>
         <div className="flex items-center gap-1">
+          {DemoModeBadge && (
+            <Suspense fallback={null}>
+              <DemoModeBadge compact />
+            </Suspense>
+          )}
           <ThemeToggle />
           <button
             type="button"
