@@ -45,6 +45,7 @@ const TYPE_OPTIONS: Array<{ value: ClientType | 'all'; label: string }> = [
   { value: 'all', label: 'Todos' },
   { value: 'company', label: 'Empresas' },
   { value: 'individual', label: 'Pessoa Física' },
+  { value: 'ceremonialist', label: 'Cerimonialistas' },
 ]
 
 const controlClassName = cn(

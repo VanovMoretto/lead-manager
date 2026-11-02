@@ -1,5 +1,5 @@
 import { formatDateBR } from './format'
-import type { Lead } from '../types/lead'
+import { CEREMONIALIST_ORIGIN, type Lead } from '../types/lead'
 
 /** Separador usado no texto legado `room_interest` ("Salão A | Salão B"). */
 export const ROOM_SEPARATOR = ' | '
@@ -17,6 +17,12 @@ export function splitRooms(text: string | null | undefined): string[] {
  * Salas de interesse do lead. Usa o array `room_interests`; se vier vazio
  * (registro antigo ainda não migrado), cai no texto legado `room_interest`.
  */
+/** O meio de prospecção é "Cerimonialista" (sem diferenciar acentos e maiúsculas)? */
+export function isCeremonialistOrigin(origin: string | null | undefined): boolean {
+  const normalized = (origin ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase()
+  return normalized === CEREMONIALIST_ORIGIN.toLowerCase()
+}
+
 export function getLeadRooms(lead: Pick<Lead, 'room_interests' | 'room_interest'>): string[] {
   if (Array.isArray(lead.room_interests) && lead.room_interests.length > 0) return lead.room_interests
   return splitRooms(lead.room_interest)

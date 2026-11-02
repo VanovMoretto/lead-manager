@@ -33,10 +33,12 @@ import type { LayoutOutletContext } from '../components/Layout'
 import ClientMetricsPanel, { type ClientMetricsView } from '../components/ClientMetricsPanel'
 import ClientTypeBadge from '../components/ClientTypeBadge'
 import ContactFormModal from '../components/ContactFormModal'
+import LeadOwnerCell from '../components/LeadOwnerCell'
 import StatusBadge from '../components/StatusBadge'
 import WhatsAppButton from '../components/WhatsAppButton'
 import { useAuth } from '../contexts/AuthContext'
 import { useConfirm } from '../hooks/useConfirm'
+import { useUserLogins } from '../hooks/useUserLogins'
 import type { RecurringClientMatch } from '../hooks/useRecurringClient'
 import { normalizeEmail, normalizePhoneDigits } from '../lib/contactIdentity'
 import { isProposalSent, toLocalISODate } from '../lib/dashboard'
@@ -62,7 +64,14 @@ type ClientData = {
 
 type LoadResult = { key: string; data: ClientData | null; error: string | null; leadRedirect?: string }
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 async function loadClient(clientId: string): Promise<Omit<LoadResult, 'key'>> {
+  // Cerimonialista: além do histórico dela, as propostas que ela indicou para outros clientes
+  const leadsQuery = supabase.from('leads').select('*')
+  const ownLeads = UUID_PATTERN.test(clientId)
+    ? leadsQuery.or(`client_id.eq.${clientId},ceremonialist_id.eq.${clientId}`)
+    : leadsQuery.eq('client_id', clientId)
   const [clientResponse, contactsResponse, leadsResponse] = await Promise.all([
     supabase.from('clients').select('*').eq('id', clientId).maybeSingle(),
     supabase
@@ -72,7 +81,7 @@ async function loadClient(clientId: string): Promise<Omit<LoadResult, 'key'>> {
       .order('is_primary', { ascending: false })
       .order('active', { ascending: false })
       .order('created_at', { ascending: true }),
-    supabase.from('leads').select('*').eq('client_id', clientId).order('created_at', { ascending: false }),
+    ownLeads.order('created_at', { ascending: false }),
   ])
 
   // Id fora do formato uuid: trata como "não encontrado"
@@ -816,6 +825,8 @@ export default function ClientDashboard() {
   const [retryCount, setRetryCount] = useState(0)
   const [contactModal, setContactModal] = useState<{ contact: ClientContact | null } | null>(null)
   const [branchModal, setBranchModal] = useState(false)
+  const [ownerError, setOwnerError] = useState<string | null>(null)
+  const logins = useUserLogins()
   const [metricsOpen, setMetricsOpen] = useState(false)
   const [metricsView, setMetricsView] = useState<ClientMetricsView>('revenue')
   const closeMetrics = useCallback(() => setMetricsOpen(false), [])
@@ -1115,7 +1126,13 @@ export default function ClientDashboard() {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[980px] text-left text-sm">
+            {ownerError && (
+              <p role="alert" className="mx-5 mt-4 flex items-center gap-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300">
+                <CircleAlert className="h-4 w-4 shrink-0" aria-hidden="true" />
+                {ownerError}
+              </p>
+            )}
+            <table className="w-full min-w-[1100px] text-left text-sm">
               <thead className="whitespace-nowrap border-b border-slate-200 bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:border-slate-800 dark:bg-slate-950/50 dark:text-slate-400">
                 <tr>
                   <th scope="col" className="py-3 pl-5 pr-3">Solicitação</th>
@@ -1125,6 +1142,7 @@ export default function ClientDashboard() {
                   <th scope="col" className="px-3 py-3">Evento</th>
                   <th scope="col" className="px-3 py-3 text-right">Receita total</th>
                   <th scope="col" className="px-3 py-3">Situação</th>
+                  <th scope="col" className="px-3 py-3">Responsável</th>
                   <th scope="col" className="px-5 py-3 text-right">Ações</th>
                 </tr>
               </thead>
@@ -1155,6 +1173,11 @@ export default function ClientDashboard() {
                       <td className="px-3 py-3">
                         <p className="font-medium text-slate-800 dark:text-slate-100">{contact?.name ?? lead.contact_name}</p>
                         {contact?.role && <p className="text-xs text-slate-500 dark:text-slate-400">{contact.role}</p>}
+                        {lead.client_id !== client.id && (
+                          <p className="mt-0.5 text-xs font-medium text-violet-700 dark:text-violet-300">
+                            Indicação{lead.company ? ` · ${lead.company}` : ''}
+                          </p>
+                        )}
                       </td>
                       <td className="px-3 py-3">
                         {rooms.length > 0 ? (
@@ -1186,6 +1209,16 @@ export default function ClientDashboard() {
                       </td>
                       <td className="px-3 py-3">
                         <StatusBadge status={lead.status} />
+                      </td>
+                      <td className="px-3 py-2.5">
+                        <LeadOwnerCell
+                          key={`${lead.id}:${lead.user_id}`}
+                          leadId={lead.id}
+                          userId={lead.user_id}
+                          logins={logins}
+                          leadLabel={lead.event_name || lead.contact_name}
+                          onError={setOwnerError}
+                        />
                       </td>
                       <td className="whitespace-nowrap px-5 py-3 text-right">
                         <div className="inline-flex gap-1.5">

@@ -33,6 +33,7 @@ export const REVENUE_COLUMNS = [
   'payment_status',
   'survey_status',
   'proposal_number',
+  'user_id',
 ].join(', ')
 
 export type RevenueLead = Pick<
@@ -63,6 +64,7 @@ export type RevenueLead = Pick<
   | 'payment_status'
   | 'survey_status'
   | 'proposal_number'
+  | 'user_id'
 >
 
 export type RevenueMetric = 'rental' | 'net' | 'gross' | 'compare'
@@ -92,18 +94,26 @@ export const MONTH_LONG_LABELS = [
 
 const PAGE_SIZE = 1000
 
+/** Período personalizado da planilha: datas "YYYY-MM-DD" do evento, inclusive. */
+export type RevenueRange = { from: string; to: string }
+
 /**
  * Propostas fechadas ou em negociação com evento no ano (e em dezembro do ano anterior,
  * para comparar janeiro com o mês anterior). Perdidas não entram na planilha.
+ * Com período personalizado, a busca se estende para cobrir também esse período.
  */
-export async function fetchRevenueLeads(year: number, signal?: AbortSignal): Promise<RevenueLead[]> {
+export async function fetchRevenueLeads(year: number, signal?: AbortSignal, range?: RevenueRange | null): Promise<RevenueLead[]> {
+  const yearFrom = `${year - 1}-12-01`
+  const yearTo = `${year}-12-31`
+  const from = range && range.from < yearFrom ? range.from : yearFrom
+  const to = range && range.to > yearTo ? range.to : yearTo
   const rows: RevenueLead[] = []
   for (let offset = 0; ; offset += PAGE_SIZE) {
     let query = supabase
       .from('leads')
       .select(REVENUE_COLUMNS)
-      .gte('event_date', `${year - 1}-12-01`)
-      .lte('event_date', `${year}-12-31`)
+      .gte('event_date', from)
+      .lte('event_date', to)
       .in('status', ['fechado', 'em_aberto'])
       .order('event_date', { ascending: true })
       .order('id', { ascending: true })
@@ -129,6 +139,49 @@ export const isConfirmed = (lead: Pick<Lead, 'status'>) => lead.status === 'fech
 export function eventYearMonth(lead: Pick<Lead, 'event_date'>): { year: number; month: number } | null {
   if (!lead.event_date) return null
   return { year: Number(lead.event_date.slice(0, 4)), month: Number(lead.event_date.slice(5, 7)) }
+}
+
+const DAY_MS = 86_400_000
+const toDayNumber = (iso: string) => Date.UTC(Number(iso.slice(0, 4)), Number(iso.slice(5, 7)) - 1, Number(iso.slice(8, 10))) / DAY_MS
+const fromDayNumber = (day: number) => new Date(day * DAY_MS).toISOString().slice(0, 10)
+
+/** Soma meses a uma data "YYYY-MM-DD"; dia que não existe no mês vira o último dia (31/10 + 1 mês = 30/11). */
+function addMonths(iso: string, months: number): string {
+  const total = Number(iso.slice(0, 4)) * 12 + Number(iso.slice(5, 7)) - 1 + months
+  const year = Math.floor(total / 12)
+  const month = (total % 12) + 1
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate()
+  const day = Math.min(Number(iso.slice(8, 10)), lastDay)
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+}
+
+/** Distância de `from` até `to` (from <= to) em meses de calendário e dias. */
+function calendarDistance(from: string, to: string): { months: number; days: number } {
+  let months = (Number(to.slice(0, 4)) - Number(from.slice(0, 4))) * 12 + Number(to.slice(5, 7)) - Number(from.slice(5, 7))
+  if (addMonths(from, months) > to) months -= 1
+  return { months, days: toDayNumber(to) - toDayNumber(addMonths(from, months)) }
+}
+
+/**
+ * Muda uma ponta do período personalizado. Se ela passar da outra, a outra anda junto,
+ * pelo mesmo tanto de meses e dias (18/09 a 17/10 com De em 18/10 vira 18/10 a 17/11).
+ */
+export function moveRangeEdge(range: RevenueRange, edge: keyof RevenueRange, value: string): RevenueRange {
+  const next = { ...range, [edge]: value }
+  if (!value || !range.from || !range.to || next.from <= next.to) return next
+  if (edge === 'from') {
+    const { months, days } = calendarDistance(range.from, value)
+    const to = fromDayNumber(toDayNumber(addMonths(range.to, months)) + days)
+    return { from: value, to: to >= value ? to : value }
+  }
+  const { months, days } = calendarDistance(value, range.to)
+  const from = fromDayNumber(toDayNumber(addMonths(range.from, -months)) - days)
+  return { from: from <= value ? from : value, to: value }
+}
+
+/** Evento (pela data de início) dentro do período personalizado. */
+export function inRange(lead: Pick<Lead, 'event_date'>, range: RevenueRange): boolean {
+  return Boolean(lead.event_date && lead.event_date >= range.from && lead.event_date <= range.to)
 }
 
 export function inPeriod(lead: Pick<Lead, 'event_date'>, year: number, month: number | null): boolean {

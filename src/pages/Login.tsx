@@ -68,7 +68,7 @@ const inputClassName = cn(
 )
 
 export default function Login() {
-  const { session, loading, signIn, requestPasswordReset, accessNotice, clearAccessNotice, passwordRecovery } = useAuth()
+  const { session, loading, signIn, requestPasswordReset, accessNotice, clearAccessNotice } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
 
@@ -103,9 +103,9 @@ export default function Login() {
 
   const redirectTo = (location.state as RedirectState | null)?.from ?? '/'
 
-  // Já logado: vai direto para o app (ou para definir a nova senha, se veio do link de recuperação)
+  // Já logado: vai direto para o app
   if (!loading && session) {
-    return <Navigate to={passwordRecovery ? '/redefinir-senha' : redirectTo} replace />
+    return <Navigate to={redirectTo} replace />
   }
 
   const busy = submitting || sendingReset

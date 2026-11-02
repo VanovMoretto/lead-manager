@@ -1,30 +1,11 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
-import type { AuthError, Session, User } from '@supabase/supabase-js'
-import { isPasswordRecoveryRedirect, isRecoverySession, setRememberSession, supabase } from '../lib/supabase'
-import { isDemoMode } from '../lib/demoMode'
+import type { Session, User } from '@supabase/supabase-js'
+import { isRecoverySession, setRememberSession, supabase } from '../lib/supabase'
+import { toLoginEmail, translateAuthError } from '../lib/authHelpers'
+import { recoveryClient, resetPasswordUrl } from '../lib/passwordRecovery'
 import type { UserProfile } from '../types/lead'
 
 type ActionResult = { error: string | null }
-
-/** "empresa.com.br" ou "@empresa.com.br" -> "@empresa.com.br". */
-function toEmailDomain(value: string): string {
-  return value.startsWith('@') ? value : `@${value}`
-}
-
-/**
- * Domínio dos logins da equipe: quem digita só o usuário (ex.: nome.sobrenome) entra com este sufixo.
- * Definido por `VITE_DEFAULT_EMAIL_DOMAIN`; no Modo Demonstração, o padrão é o domínio das contas fictícias.
- */
-// oxlint-disable-next-line react/only-export-components
-export const DEFAULT_EMAIL_DOMAIN = toEmailDomain(
-  import.meta.env.VITE_DEFAULT_EMAIL_DOMAIN?.trim().toLowerCase() || (isDemoMode ? '@portfolio.demo' : '@empresa.com.br'),
-)
-
-/** "Nome.Sobrenome " -> "nome.sobrenome@empresa.com.br"; um e-mail completo é mantido como foi digitado. */
-function toLoginEmail(identifier: string): string {
-  const value = identifier.trim().toLowerCase()
-  return value.includes('@') ? value : `${value}${DEFAULT_EMAIL_DOMAIN}`
-}
 
 const INACTIVE_NOTICE = 'Seu acesso ainda não foi liberado ou está desativado. Peça a um administrador para ativá-lo no Painel Admin.'
 
@@ -44,8 +25,6 @@ type AuthContextValue = {
   /** Aviso para a tela de login (ex.: acesso desativado). */
   accessNotice: string | null
   clearAccessNotice: () => void
-  /** Chegou pelo link de "Esqueci minha senha" e ainda não definiu a nova senha. */
-  passwordRecovery: boolean
   /** `identifier` é o usuário (sem domínio) ou um e-mail completo. */
   signIn: (identifier: string, password: string, options?: { remember?: boolean; captchaToken?: string }) => Promise<ActionResult>
   signOut: () => Promise<void>
@@ -53,42 +32,9 @@ type AuthContextValue = {
   requestPasswordReset: (identifier: string, captchaToken?: string) => Promise<ActionResult>
   /** Troca de senha no perfil: confirma a senha atual antes. */
   changePassword: (currentPassword: string, newPassword: string, captchaToken?: string) => Promise<ActionResult>
-  /** Define a nova senha depois do link de recuperação. */
-  completePasswordRecovery: (newPassword: string) => Promise<ActionResult>
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined)
-
-/** Traduz as mensagens mais comuns do Supabase Auth. */
-function translateAuthError(error: Pick<AuthError, 'message'> & { code?: string }, fallback: string): string {
-  const normalized = error.message.toLowerCase()
-
-  if (error.code === 'invalid_credentials' || normalized.includes('invalid login credentials')) {
-    return 'Usuário ou senha incorretos.'
-  }
-  if (normalized.includes('email not confirmed')) {
-    return 'Este e-mail ainda não foi confirmado. Verifique sua caixa de entrada.'
-  }
-  if (error.code === 'same_password' || normalized.includes('different from the old password')) {
-    return 'A nova senha precisa ser diferente da atual.'
-  }
-  if (error.code === 'weak_password' || normalized.includes('password should')) {
-    return 'Senha fraca. Use pelo menos 8 caracteres, misturando letras e números.'
-  }
-  if (error.code === 'reauthentication_needed' || error.code === 'session_not_found' || error.code === 'session_expired') {
-    return 'Sua sessão expirou. Entre novamente e tente de novo.'
-  }
-  if (normalized.includes('captcha')) {
-    return 'Confirme a verificação de segurança (captcha) e tente de novo.'
-  }
-  if (normalized.includes('too many requests') || normalized.includes('rate limit')) {
-    return 'Muitas tentativas seguidas. Aguarde alguns instantes e tente novamente.'
-  }
-  if (normalized.includes('failed to fetch') || normalized.includes('network')) {
-    return 'Não foi possível conectar ao servidor. Verifique sua internet.'
-  }
-  return fallback
-}
 
 type ProfileState = {
   userId: string
@@ -103,29 +49,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profileState, setProfileState] = useState<ProfileState | null>(null)
   const [profileVersion, setProfileVersion] = useState(0)
   const [accessNotice, setAccessNotice] = useState<string | null>(null)
-  // Sinal de que o link de recuperação foi aberto (URL ou evento do Supabase)
-  const [recoveryRequested, setPasswordRecovery] = useState(isPasswordRecoveryRedirect)
-  // A tela de nova senha só vale para uma sessão aberta pelo link: "?type=recovery" numa sessão comum não basta
-  const passwordRecovery = recoveryRequested && isRecoverySession(session)
   const userId = session?.user.id ?? null
 
   useEffect(() => {
     let isMounted = true
 
+    // Sessão aberta pelo link de recuperação nunca vale como login no app (ex.: guardada antes
+    // desta regra): é encerrada e a pessoa entra de novo com a senha
+    const acceptSession = (next: Session | null): Session | null => {
+      if (next && isRecoverySession(next)) {
+        void supabase.auth.signOut({ scope: 'local' })
+        return null
+      }
+      return next
+    }
+
     supabase.auth.getSession().then(({ data }) => {
       if (!isMounted) return
-      setSession(data.session)
+      setSession(acceptSession(data.session))
       setLoading(false)
     })
 
     const { data: listener } = supabase.auth.onAuthStateChange((event, nextSession) => {
-      if (event === 'PASSWORD_RECOVERY') setPasswordRecovery(true)
       if (event === 'SIGNED_OUT') {
-        setPasswordRecovery(false)
         // O próximo login consulta o perfil de novo (pode ter sido desativado nesse meio-tempo)
         setProfileState(null)
       }
-      setSession(nextSession)
+      setSession(acceptSession(nextSession))
       setLoading(false)
     })
 
@@ -194,8 +144,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const requestPasswordReset = useCallback(async (identifier: string, captchaToken?: string): Promise<ActionResult> => {
-    const { error } = await supabase.auth.resetPasswordForEmail(toLoginEmail(identifier), {
-      redirectTo: `${window.location.origin}${import.meta.env.BASE_URL}redefinir-senha`,
+    // Pedido pelo cliente da recuperação: o link volta para a página própria de nova senha
+    const { error } = await recoveryClient.auth.resetPasswordForEmail(toLoginEmail(identifier), {
+      redirectTo: resetPasswordUrl(),
       captchaToken,
     })
     return {
@@ -229,17 +180,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [userEmail],
   )
 
-  const completePasswordRecovery = useCallback(async (newPassword: string): Promise<ActionResult> => {
-    const { data } = await supabase.auth.getSession()
-    if (!isRecoverySession(data.session)) {
-      return { error: 'Este link de recuperação não é válido. Para trocar a senha estando logado, use o Perfil.' }
-    }
-    const { error } = await supabase.auth.updateUser({ password: newPassword })
-    if (error) return { error: translateAuthError(error, 'Não foi possível salvar a nova senha. Tente novamente.') }
-    setPasswordRecovery(false)
-    return { error: null }
-  }, [])
-
   const value = useMemo<AuthContextValue>(
     () => ({
       session,
@@ -251,12 +191,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       refreshProfile,
       accessNotice,
       clearAccessNotice,
-      passwordRecovery,
       signIn,
       signOut,
       requestPasswordReset,
       changePassword,
-      completePasswordRecovery,
     }),
     [
       session,
@@ -267,12 +205,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       refreshProfile,
       accessNotice,
       clearAccessNotice,
-      passwordRecovery,
       signIn,
       signOut,
       requestPasswordReset,
       changePassword,
-      completePasswordRecovery,
     ],
   )
 

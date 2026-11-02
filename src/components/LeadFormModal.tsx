@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import {
   BadgeCheck,
   BedDouble,
@@ -38,13 +39,18 @@ import {
   toCents,
 } from '../lib/format'
 import { useSettingsOptions } from '../hooks/useSettingsOptions'
-import { NET_RATES_LABEL, computeNetValue, countEventDays, getLeadRooms } from '../lib/leadFields'
+import { NET_RATES_LABEL, computeNetValue, countEventDays, getLeadRooms, isCeremonialistOrigin } from '../lib/leadFields'
+import { useCeremonialists, type Ceremonialist } from '../hooks/useCeremonialists'
+import CeremonialistFormModal from './CeremonialistFormModal'
+import ContactMergeDialog from './ContactMergeDialog'
 import RecurringClientNotice from './RecurringClientNotice'
 import { useAuth } from '../contexts/AuthContext'
 import { useConfirm } from '../hooks/useConfirm'
 import {
+  useKnownContacts,
   useRecurringClient,
   type ClientBranch,
+  type KnownContactClient,
   type ClientLinkChoice,
   type RecurringClientMatch,
 } from '../hooks/useRecurringClient'
@@ -54,6 +60,7 @@ import CompanyAutocomplete from './CompanyAutocomplete'
 import { fetchLeadAttachmentPaths, removeAttachmentFiles } from '../lib/leadAttachments'
 import { RateLimitError, guardMutation } from '../lib/rateLimit'
 import {
+  CEREMONIALIST_ORIGIN,
   DEFAULT_LOSS_REASONS,
   LOSS_REASON_OTHER,
   type ClientContact,
@@ -95,6 +102,8 @@ type FormState = {
   /** Cliente pediu para não receber comunicações/mailing (LGPD). */
   marketing_opt_out: boolean
   origin: string
+  /** Cerimonialista que indicou (só vale com o meio de prospecção "Cerimonialista"). */
+  ceremonialist_id: string
   /** Salas marcadas (seleção múltipla). */
   room_interests: string[]
   /** Checkbox "Cliente ainda sem data definida" (coluna is_date_flexible). */
@@ -131,8 +140,10 @@ type FieldName = keyof FormState
 type FormErrors = Partial<Record<FieldName, string>>
 
 function buildInitialState(lead?: Lead | null, presetClient?: RecurringClientMatch | null): FormState {
+  // Proposta aberta pelo painel da cerimonialista: indicação dela, para um cliente novo
+  const presetCeremonialist = !lead && presetClient?.client.client_type === 'ceremonialist' ? presetClient.client : null
   // Proposta para um cliente já cadastrado: começa com a empresa e o contato principal
-  const presetContact = !lead ? presetClient?.contacts.find((contact) => contact.active) : undefined
+  const presetContact = !lead && !presetCeremonialist ? presetClient?.contacts.find((contact) => contact.active) : undefined
   const presetCompany = !lead && presetClient?.client.client_type === 'company' ? presetClient.client.name : ''
   return {
     contact_name: lead?.contact_name ?? presetContact?.name ?? '',
@@ -141,7 +152,8 @@ function buildInitialState(lead?: Lead | null, presetClient?: RecurringClientMat
     company: lead?.company ?? presetCompany,
     cnpj: lead?.cnpj ? formatCNPJ(lead.cnpj) : !lead && presetClient?.client.cnpj ? formatCNPJ(presetClient.client.cnpj) : '',
     marketing_opt_out: lead?.marketing_opt_out ?? false,
-    origin: lead?.origin ?? '',
+    origin: lead?.origin ?? (presetCeremonialist ? CEREMONIALIST_ORIGIN : ''),
+    ceremonialist_id: lead?.ceremonialist_id ?? presetCeremonialist?.id ?? '',
     room_interests: lead ? [...getLeadRooms(lead)] : [],
     no_date: lead?.is_date_flexible ?? false,
     event_date: lead?.event_date ?? '',
@@ -177,7 +189,14 @@ function needsLossDetails(state: FormState): boolean {
   return state.loss_reason === LOSS_REASON_OTHER || state.show_loss_details
 }
 
-function validate(state: FormState): FormErrors {
+type ValidateOptions = {
+  /** Proposta nova: locação, salas e data (quando há data) são obrigatórias. */
+  requireCore: boolean
+  /** Há salas cadastradas no Painel Admin para escolher. */
+  hasRooms: boolean
+}
+
+function validate(state: FormState, { requireCore, hasRooms }: ValidateOptions): FormErrors {
   const errors: FormErrors = {}
 
   if (!state.contact_name.trim()) {
@@ -192,6 +211,13 @@ function validate(state: FormState): FormErrors {
   if (state.contact_email.trim() && !isValidEmail(state.contact_email)) {
     errors.contact_email = 'E-mail inválido.'
   }
+  // Na ordem do formulário: o primeiro erro recebe o foco
+  if (requireCore && hasRooms && state.room_interests.length === 0) {
+    errors.room_interests = 'Selecione ao menos uma sala/salão.'
+  }
+  if (requireCore && !state.no_date && !state.event_date) {
+    errors.event_date = state.multi_day ? 'Informe a data inicial.' : 'Informe a data de interesse ou marque "Cliente ainda sem data definida".'
+  }
   if (!state.no_date && state.multi_day) {
     if (state.event_end_date && !state.event_date) {
       errors.event_date = 'Informe a data inicial.'
@@ -200,6 +226,9 @@ function validate(state: FormState): FormErrors {
     } else if (state.event_date && state.event_end_date && state.event_end_date < state.event_date) {
       errors.event_end_date = 'A data final precisa ser igual ou posterior à inicial.'
     }
+  }
+  if (requireCore && state.value_cents === null) {
+    errors.value_cents = 'Informe o valor de locação / espaço.'
   }
   if (state.status === 'fechado' && !state.proposal_number.trim()) {
     errors.proposal_number = 'Informe o número da proposta para registrar o fechamento.'
@@ -228,6 +257,7 @@ function buildPayload(state: FormState, forceOptOut = false): LeadInsert {
     cnpj: isValidCNPJ(state.cnpj) ? formatCNPJ(state.cnpj) : null,
     marketing_opt_out: state.marketing_opt_out || forceOptOut,
     origin: state.origin || null,
+    ceremonialist_id: isCeremonialistOrigin(state.origin) && state.ceremonialist_id ? state.ceremonialist_id : null,
     room_interests: state.room_interests,
     is_date_flexible: state.no_date,
     event_date: state.no_date ? null : state.event_date || null,
@@ -343,6 +373,7 @@ const inputBaseClassName = cn(
   'block w-full rounded-lg border bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm transition-colors',
   'placeholder:text-slate-400 focus:outline-none focus:ring-2',
   'dark:bg-slate-950 dark:text-white dark:placeholder:text-slate-500',
+  'disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500 dark:disabled:bg-slate-900 dark:disabled:text-slate-400',
   'disabled:cursor-not-allowed disabled:opacity-60',
 )
 
@@ -407,21 +438,24 @@ function Section({ icon: Icon, title, children }: SectionProps) {
 type MoneyInputProps = {
   id: string
   cents: number | null
+  invalid?: boolean
   onChange: (cents: number | null) => void
 }
 
 /** Campo de moeda em R$: os dígitos entram da direita (centavos primeiro). */
-function MoneyInput({ id, cents, onChange }: MoneyInputProps) {
+function MoneyInput({ id, cents, invalid = false, onChange }: MoneyInputProps) {
   return (
     <input
       id={id}
+      aria-invalid={invalid}
+      aria-describedby={invalid ? `${id}-error` : undefined}
       type="text"
       inputMode="numeric"
       autoComplete="off"
       placeholder="R$ 0,00"
       value={cents === null ? '' : formatCentsBRL(cents)}
       onChange={(event) => onChange(parseCurrencyInputToCents(event.target.value))}
-      className={cn(inputClassName(false), 'tabular-nums')}
+      className={cn(inputClassName(invalid), 'tabular-nums')}
     />
   )
 }
@@ -564,6 +598,8 @@ const STATUS_OPTIONS: StatusOption[] = [
 // Formulário (remontado a cada abertura, para sempre começar limpo)
 // =============================================================================
 
+const NEW_CEREMONIALIST = '__nova__'
+
 type LeadFormProps = {
   lead: Lead | null
   onCancel: () => void
@@ -612,6 +648,7 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
   }, [options.room, form.room_interests])
 
   const toggleRoom = (room: string) => {
+    if (errors.room_interests) setErrors((current) => ({ ...current, room_interests: undefined }))
     setForm((current) => ({
       ...current,
       room_interests: current.room_interests.includes(room)
@@ -651,6 +688,49 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
   /** "+ Outro CNPJ / Novo braço": a proposta vira um cadastro novo da mesma marca. */
   const [newBranch, setNewBranch] = useState(false)
 
+  // Telefone ou e-mail de um contato já cadastrado: preenche o contato e pergunta se mescla com a empresa dele.
+  // Aberto pela página do cliente, a empresa já está decidida e não há pergunta.
+  const askMerge = mode === 'create' && !presetClient
+  const known = useKnownContacts({ phone: form.contact_phone, email: form.contact_email, enabled: mode === 'create' })
+  const knownCompanies = useMemo(() => {
+    const unique = new Map<string, KnownContactClient>()
+    for (const item of known.contacts) {
+      if (item.client.client_type === 'company') unique.set(item.client.id, item.client)
+    }
+    return [...unique.values()]
+  }, [known.contacts])
+  const mergeKey = knownCompanies.map((company) => company.id).sort().join(',')
+  /** Resposta da pergunta de mesclar para cada grupo de empresas: a empresa escolhida, ou null para "Não". */
+  const [mergeAnswers, setMergeAnswers] = useState<Record<string, string | null>>({})
+  const mergeAnswer = mergeKey ? mergeAnswers[mergeKey] : undefined
+  // Empresas recusadas (ou ainda sem resposta) não aparecem só pelo telefone, e-mail ou domínio
+  const blockedClientIds = useMemo(() => {
+    if (!askMerge) return []
+    const blocked = new Set<string>()
+    for (const [key, accepted] of Object.entries(mergeAnswers)) {
+      for (const id of key.split(',')) if (id !== accepted) blocked.add(id)
+    }
+    if (mergeAnswer === undefined) knownCompanies.forEach((company) => blocked.add(company.id))
+    if (mergeAnswer) blocked.delete(mergeAnswer)
+    return [...blocked]
+  }, [askMerge, mergeAnswers, mergeAnswer, knownCompanies])
+
+  const [appliedKnownKey, setAppliedKnownKey] = useState('')
+  if (!known.checking && known.key && known.key !== appliedKnownKey) {
+    setAppliedKnownKey(known.key)
+    const best = known.contacts.find((item) => item.byPhone) ?? known.contacts[0]
+    if (best) {
+      const { contact } = best
+      setForm((current) => ({
+        ...current,
+        contact_name: current.contact_name.trim() ? current.contact_name : contact.name,
+        contact_email: current.contact_email.trim() ? current.contact_email : (contact.email ?? ''),
+        contact_phone: onlyDigits(current.contact_phone) ? current.contact_phone : contact.phone ? formatPhoneBR(contact.phone) : '',
+      }))
+      setErrors((current) => ({ ...current, contact_name: undefined, contact_email: undefined }))
+    }
+  }
+
   // No cadastro: reconhece cliente já cadastrado (CNPJ, telefone, e-mail, empresa ou domínio) e opt-out da LGPD
   const recurring = useRecurringClient({
     cnpj: form.cnpj,
@@ -659,6 +739,9 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
     email: form.contact_email,
     company: form.company,
     enabled: mode === 'create',
+    blockedClientIds,
+    // Sem resposta (ou com "Não"), os dados do contato não trazem empresa nenhuma sozinhos
+    contactSignalsPending: askMerge && (known.checking || (mergeKey !== '' && !mergeAnswer)),
   })
   // Aberto pela página do cliente: o vínculo já está decidido
   const lockedClient = mode === 'create' ? presetClient : null
@@ -679,6 +762,54 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
             null,
         }
     : null
+  /** "Não adicionar": a proposta fica como pessoa física; Empresa e CNPJ ficam travados e não são salvos. */
+  const personMode = Boolean(clientMatch && linkChoice && !linkChoice.link && !newBranch && !lockedClient)
+
+  // Indicação de cerimonialista: proposta de pessoa física entra no histórico dela; com empresa, fica na empresa
+  const showCeremonialist = isCeremonialistOrigin(form.origin)
+  const ceremonialists = useCeremonialists(showCeremonialist)
+  const [ceremonialistModal, setCeremonialistModal] = useState(false)
+  const ceremonialistId = showCeremonialist && form.ceremonialist_id ? form.ceremonialist_id : null
+  const companyLinked = Boolean(clientMatch?.client.client_type === 'company' && linkChoice?.link)
+  const personProposal = personMode || (!companyLinked && !form.company.trim() && !isValidCNPJ(form.cnpj))
+  const ceremonialistOwns = mode === 'create' && !lockedClient && Boolean(ceremonialistId) && personProposal
+  const handleCeremonialistCreated = (created: Ceremonialist) => {
+    ceremonialists.add(created)
+    ceremonialists.reload()
+    update('ceremonialist_id', created.id)
+    setCeremonialistModal(false)
+  }
+
+  // A empresa do contato já é a do formulário (pelo CNPJ ou pela lista de empresas): não precisa perguntar
+  const mergePending = askMerge && mergeKey !== '' && mergeAnswer === undefined && !known.checking && !recurring.checking
+  const currentClientId = recurring.match?.client.id
+  const alreadyMerged = Boolean(currentClientId && knownCompanies.some((company) => company.id === currentClientId))
+  if (mergePending && alreadyMerged && currentClientId) {
+    setMergeAnswers((current) => ({ ...current, [mergeKey]: currentClientId }))
+  }
+  const showMergeDialog = mergePending && !alreadyMerged
+
+  /** "Sim": a proposta usa a Empresa e o CNPJ do cadastro e o contato desta empresa. */
+  const handleMergeAnswer = useCallback(
+    (clientId: string | null) => {
+      setMergeAnswers((current) => ({ ...current, [mergeKey]: clientId }))
+      const client = clientId ? knownCompanies.find((company) => company.id === clientId) : undefined
+      if (!client) return
+      const contact = known.contacts.find((item) => item.client.id === client.id)?.contact
+      setNewBranch(false)
+      setPreferredClientId(client.id)
+      setClientChoice({ clientId: client.id, link: true, contactId: contact?.id ?? null })
+      setForm((current) => ({
+        ...current,
+        company: client.name,
+        cnpj: client.cnpj ? formatCNPJ(client.cnpj) : current.cnpj,
+        contact_name: current.contact_name.trim() || !contact ? current.contact_name : contact.name,
+        contact_email: current.contact_email.trim() || !contact?.email ? current.contact_email : contact.email,
+      }))
+      setErrors((current) => ({ ...current, cnpj: undefined }))
+    },
+    [mergeKey, knownCompanies, known.contacts],
+  )
 
   /** "Sim": a proposta usa o nome e o CNPJ do cadastro (o vendedor vê o vínculo no formulário). */
   const handleLinkChange = (link: boolean) => {
@@ -692,10 +823,6 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
         cnpj: !onlyDigits(current.cnpj) && client.cnpj ? formatCNPJ(client.cnpj) : current.cnpj,
       }))
       setErrors((current) => ({ ...current, cnpj: undefined }))
-    } else if (!link && clientMatch?.client.cnpj) {
-      // O CNPJ do cadastro levaria a proposta de volta a ele: cadastro separado fica sem esse CNPJ
-      const clientCnpj = onlyDigits(clientMatch.client.cnpj)
-      setForm((current) => (onlyDigits(current.cnpj) === clientCnpj ? { ...current, cnpj: '' } : current))
     }
   }
 
@@ -753,7 +880,7 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
   }
   const showAutofillNote = companyAutofill !== null && form.company === companyAutofill.name
   const cnpjDigitsTyped = onlyDigits(form.cnpj).length
-  const cnpjLiveError = cnpjDigitsTyped === 14 && !isValidCNPJ(form.cnpj) ? 'CNPJ inválido. Confira os dígitos.' : null
+  const cnpjLiveError = !personMode && cnpjDigitsTyped === 14 && !isValidCNPJ(form.cnpj) ? 'CNPJ inválido. Confira os dígitos.' : null
 
   /**
    * Contato existente preenche nome, telefone e e-mail. "Novo contato" limpa os dados do
@@ -836,7 +963,10 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
     event.preventDefault()
     if (busy) return
 
-    const validationErrors = validate(form)
+    const validationErrors = validate(personMode ? { ...form, cnpj: '' } : form, {
+      requireCore: mode === 'create',
+      hasRooms: roomLabels.length > 0,
+    })
     const firstError = Object.keys(validationErrors)[0] as FieldName | undefined
     if (firstError) {
       setErrors(validationErrors)
@@ -849,8 +979,25 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
     setSubmitError(null)
 
     const selectedContact = clientMatch?.contacts.find((contact) => contact.id === linkChoice?.contactId)
+    // Pessoa física: entra no cadastro de pessoa física de quem pediu, se já existir
+    const individual =
+      personMode && clientMatch?.client.client_type === 'company'
+        ? known.contacts.find((item) => item.client.client_type === 'individual')
+        : undefined
     const payload: LeadInsert = {
       ...buildPayload(form, optOutForced),
+      ...(personMode
+        ? {
+            company: null,
+            cnpj: null,
+            ...(individual
+              ? {
+                  client_id: individual.client.id,
+                  ...(isSameContactName(individual.contact.name, form.contact_name) ? { contact_id: individual.contact.id } : {}),
+                }
+              : {}),
+          }
+        : {}),
       // "Sim": vai para o histórico do cliente. Sem client_id o banco cria um cadastro próprio.
       ...(clientMatch && linkChoice?.link
         ? {
@@ -863,6 +1010,13 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
               : {}),
           }
         : {}),
+    }
+    // Pessoa física indicada por cerimonialista: o histórico é o dela (o cliente vira contato dela)
+    if (ceremonialistOwns && ceremonialistId) {
+      payload.client_id = ceremonialistId
+      payload.company = null
+      payload.cnpj = null
+      delete payload.contact_id
     }
     let response
     try {
@@ -1014,9 +1168,11 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
             htmlFor="lead-cnpj"
             error={errors.cnpj ?? cnpjLiveError ?? undefined}
             hint={
-              linkChoice?.link && clientMatch?.client.cnpj && !onlyDigits(form.cnpj)
-                ? `Será usado o do cadastro: ${clientMatch.client.cnpj}`
-                : 'Opcional em sondagens.'
+              personMode
+                ? 'Não será salvo: proposta como pessoa física.'
+                : linkChoice?.link && clientMatch?.client.cnpj && !onlyDigits(form.cnpj)
+                  ? `Será usado o do cadastro: ${clientMatch.client.cnpj}`
+                  : 'Opcional em sondagens.'
             }
           >
             <input
@@ -1026,13 +1182,24 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
               autoComplete="off"
               placeholder="00.000.000/0000-00"
               value={form.cnpj}
+              disabled={personMode}
               onChange={(event) => update('cnpj', formatCNPJ(event.target.value))}
               aria-invalid={Boolean(errors.cnpj ?? cnpjLiveError)}
               aria-describedby={errors.cnpj ?? cnpjLiveError ? 'lead-cnpj-error' : undefined}
               className={inputClassName(Boolean(errors.cnpj ?? cnpjLiveError))}
             />
           </Field>
-          <Field label="Empresa" htmlFor="lead-company" hint={showAutofillNote ? undefined : 'Deixe em branco se o cliente for pessoa física.'}>
+          <Field
+            label="Empresa"
+            htmlFor="lead-company"
+            hint={
+              personMode
+                ? 'Não será salva: proposta como pessoa física.'
+                : showAutofillNote
+                  ? undefined
+                  : 'Deixe em branco se o cliente for pessoa física.'
+            }
+          >
             <CompanyAutocomplete
               id="lead-company"
               maxLength={120}
@@ -1041,9 +1208,10 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
               options={companyOptions}
               onChange={(value) => update('company', value)}
               onSelect={handleSelectCompany}
+              disabled={personMode}
               className={inputClassName(false)}
             />
-            {showAutofillNote && companyAutofill && (
+            {!personMode && showAutofillNote && companyAutofill && (
               <p className="mt-1.5 flex items-center gap-1 text-xs text-emerald-700 dark:text-emerald-400">
                 <BadgeCheck className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                 {companyAutofill.source === 'receita'
@@ -1058,7 +1226,8 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
           {mode === 'create' && (
             <RecurringClientNotice
               checking={recurring.checking}
-              match={clientMatch}
+              // Pessoa física indicada por cerimonialista: o cadastro de pessoa física dá lugar ao histórico dela
+              match={ceremonialistOwns && clientMatch?.client.client_type === 'individual' ? null : clientMatch}
               suppressed={recurring.suppressed}
               choice={linkChoice}
               locked={Boolean(lockedClient)}
@@ -1068,6 +1237,11 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
               onNewBranch={handleNewBranch}
             />
           )}
+          {showMergeDialog &&
+            createPortal(
+              <ContactMergeDialog contactName={form.contact_name.trim()} companies={knownCompanies} onAnswer={handleMergeAnswer} />,
+              document.body,
+            )}
 
           <div>
             <label
@@ -1121,13 +1295,65 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
                 ))}
               </select>
             </Field>
+            {showCeremonialist && (
+              <Field
+                label="Cerimonialista"
+                htmlFor="lead-ceremonialist_id"
+                hint={
+                  ceremonialists.error
+                    ? 'Não foi possível carregar as cerimonialistas (rode a migração 016).'
+                    : !ceremonialistId
+                      ? 'Quem indicou esta proposta.'
+                      : ceremonialistOwns
+                        ? undefined
+                        : lockedClient && lockedClient.client.client_type !== 'ceremonialist'
+                          ? 'A proposta fica no cliente aberto e a indicação aparece no painel da cerimonialista.'
+                          : 'Com empresa: a proposta fica na empresa e a indicação aparece no painel da cerimonialista.'
+                }
+              >
+                <select
+                  id="lead-ceremonialist_id"
+                  value={form.ceremonialist_id}
+                  onChange={(event) => {
+                    if (event.target.value === NEW_CEREMONIALIST) setCeremonialistModal(true)
+                    else update('ceremonialist_id', event.target.value)
+                  }}
+                  disabled={ceremonialists.loading && ceremonialists.items.length === 0}
+                  className={inputClassName(false)}
+                >
+                  <option value="">{ceremonialists.loading && ceremonialists.items.length === 0 ? 'Carregando...' : 'Selecione a cerimonialista'}</option>
+                  {ceremonialists.items.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
+                  {form.ceremonialist_id && !ceremonialists.items.some((item) => item.id === form.ceremonialist_id) && (
+                    <option value={form.ceremonialist_id}>Cerimonialista cadastrada</option>
+                  )}
+                  <option value={NEW_CEREMONIALIST}>+ Nova cerimonialista</option>
+                </select>
+              </Field>
+            )}
           </div>
+          {ceremonialistModal &&
+            createPortal(
+              <CeremonialistFormModal onClose={() => setCeremonialistModal(false)} onCreated={handleCeremonialistCreated} />,
+              document.body,
+            )}
 
           {/* Salas: seleção múltipla com chips clicáveis */}
-          <div role="group" aria-labelledby="lead-rooms-label">
+          <div
+            id="lead-room_interests"
+            tabIndex={-1}
+            role="group"
+            aria-labelledby="lead-rooms-label"
+            aria-describedby={errors.room_interests ? 'lead-room_interests-error' : undefined}
+            className="rounded-lg focus:outline-none"
+          >
             <div className="mb-1.5 flex items-baseline justify-between gap-2">
               <p id="lead-rooms-label" className="text-sm font-medium text-slate-700 dark:text-slate-200">
                 Salas/Salões de interesse
+                {mode === 'create' && roomLabels.length > 0 && <span className="ml-0.5 text-red-500">*</span>}
               </p>
               {form.room_interests.length > 0 && (
                 <span className="text-xs font-medium text-brand-700 dark:text-brand-300">
@@ -1176,6 +1402,11 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
                   )
                 })}
               </div>
+            )}
+            {errors.room_interests && (
+              <p id="lead-room_interests-error" className="mt-1.5 text-xs font-medium text-red-600 dark:text-red-400">
+                {errors.room_interests}
+              </p>
             )}
           </div>
         </Section>
@@ -1266,6 +1497,7 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
                 <Field
                   label={form.multi_day ? 'Data inicial' : 'Data de interesse'}
                   htmlFor="lead-event_date"
+                  required={mode === 'create'}
                   error={errors.event_date}
                 >
                   <input
@@ -1301,8 +1533,13 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
           )}
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Field label="Valor de Locação / Espaço (R$)" htmlFor="lead-value_cents">
-              <MoneyInput id="lead-value_cents" cents={form.value_cents} onChange={(cents) => update('value_cents', cents)} />
+            <Field label="Valor de Locação / Espaço (R$)" htmlFor="lead-value_cents" required={mode === 'create'} error={errors.value_cents}>
+              <MoneyInput
+                id="lead-value_cents"
+                cents={form.value_cents}
+                invalid={Boolean(errors.value_cents)}
+                onChange={(cents) => update('value_cents', cents)}
+              />
             </Field>
           </div>
 
@@ -1684,13 +1921,11 @@ export default function LeadFormModal({ open, onClose, lead = null, onSaved, onD
               <h2 id="lead-form-title" className="text-lg font-semibold text-slate-900 dark:text-white">
                 {isEdit ? 'Editar Proposta' : 'Nova Proposta'}
               </h2>
-              <p className="truncate text-sm text-slate-500 dark:text-slate-400">
-                {isEdit
-                  ? lead?.contact_name
-                  : presetClient
-                    ? `Para ${presetClient.client.name}`
-                    : 'Só o nome é obrigatório. O resto pode ser completado depois.'}
-              </p>
+              {(isEdit || presetClient) && (
+                <p className="truncate text-sm text-slate-500 dark:text-slate-400">
+                  {isEdit ? lead?.contact_name : `Para ${presetClient?.client.name}`}
+                </p>
+              )}
             </div>
           </div>
           <button

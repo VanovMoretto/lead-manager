@@ -19,12 +19,14 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import HorizontalScrollArea from '../components/HorizontalScrollArea'
+import LeadOwnerCell from '../components/LeadOwnerCell'
 import PageHeader from '../components/PageHeader'
 import ValueDetails from '../components/ValueDetails'
 import type { LayoutOutletContext } from '../components/Layout'
 import { useTheme } from '../contexts/ThemeContext'
+import { useUserLogins } from '../hooks/useUserLogins'
 import { CHART_THEMES, type ChartTheme } from '../lib/chartTheme'
-import { formatBRL } from '../lib/format'
+import { formatBRL, formatDateBR } from '../lib/format'
 import { formatLeadRooms, getLeadValues, NET_RATES, sumLeadValues } from '../lib/leadFields'
 import { RateLimitError, guardMutation } from '../lib/rateLimit'
 import {
@@ -36,12 +38,15 @@ import {
   fetchRevenueLeads,
   formatEventDays,
   inPeriod,
+  inRange,
+  moveRangeEdge,
   isConfirmed,
   netShare,
   revenueSituation,
   summarizeRevenue,
   type RevenueLead,
   type RevenueMetric,
+  type RevenueRange,
 } from '../lib/revenue'
 import { supabase } from '../lib/supabase'
 import { cn } from '../lib/utils'
@@ -94,6 +99,8 @@ const PAYMENT_STYLES: Record<PaymentStatus, string> = {
   parcial: 'text-sky-700 dark:text-sky-300',
   pago: 'text-emerald-700 dark:text-emerald-300',
 }
+
+const CUSTOM_PERIOD = -1
 
 const inlineSelect =
   'w-full min-w-[7.5rem] rounded-md border px-2 py-1 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-brand-600/30 disabled:opacity-60'
@@ -420,20 +427,27 @@ export default function RevenueMap() {
 
   const [year, setYear] = useState(currentYear)
   const [month, setMonth] = useState<number | null>(() => new Date().getMonth() + 1)
+  /** Período personalizado (De/Até, pela data do evento); nulo = ano ou mês. */
+  const [customRange, setCustomRange] = useState<RevenueRange | null>(null)
+  const customInvalid = Boolean(customRange && (!customRange.from || !customRange.to || customRange.from > customRange.to))
+  const activeRange = useMemo(() => (customRange && !customInvalid ? customRange : null), [customRange, customInvalid])
+  const rangeFrom = activeRange?.from ?? ''
+  const rangeTo = activeRange?.to ?? ''
   const [metric, setMetric] = useState<RevenueMetric>('rental')
   const [situation, setSituation] = useState<SituationFilter>('all')
   const [retryCount, setRetryCount] = useState(0)
   const [savingIds, setSavingIds] = useState<Set<string>>(() => new Set())
   const [actionError, setActionError] = useState<string | null>(null)
   const [exporting, setExporting] = useState<'xlsx' | 'pdf' | null>(null)
+  const logins = useUserLogins()
 
-  const key = `${year}|${leadsVersion}|${retryCount}`
+  const key = `${year}|${rangeFrom}:${rangeTo}|${leadsVersion}|${retryCount}`
   const [result, setResult] = useState<AsyncResult<RevenueLead[]> | null>(null)
 
   useEffect(() => {
     let isActive = true
     const controller = new AbortController()
-    fetchRevenueLeads(year, controller.signal)
+    fetchRevenueLeads(year, controller.signal, rangeFrom ? { from: rangeFrom, to: rangeTo } : null)
       .then((data) => {
         if (isActive) setResult({ key, data, error: null })
       })
@@ -446,7 +460,7 @@ export default function RevenueMap() {
       isActive = false
       controller.abort()
     }
-  }, [key, year])
+  }, [key, year, rangeFrom, rangeTo])
 
   const loading = result?.key !== key
   const leads = useMemo(() => (result?.data ?? []).filter((lead) => eventYearMonth(lead)), [result])
@@ -454,7 +468,10 @@ export default function RevenueMap() {
   const firstLoad = result === null
 
   const yearLeads = useMemo(() => leads.filter((lead) => inPeriod(lead, year, null)), [leads, year])
-  const periodLeads = useMemo(() => leads.filter((lead) => inPeriod(lead, year, month)), [leads, year, month])
+  const periodLeads = useMemo(() => {
+    if (customRange) return activeRange ? leads.filter((lead) => inRange(lead, activeRange)) : []
+    return leads.filter((lead) => inPeriod(lead, year, month))
+  }, [leads, year, month, customRange, activeRange])
   const summary = useMemo(() => summarizeRevenue(periodLeads), [periodLeads])
   const rentalBySituation = useMemo(() => {
     const totals: Record<OperationalStatus, number> = { realizado: 0, confirmado: 0, a_confirmar: 0 }
@@ -498,7 +515,29 @@ export default function RevenueMap() {
   const metaConfirmed = tableRows.filter(isConfirmed).reduce((sum, lead) => sum + Number(lead.proposed_value ?? 0), 0)
   const metaPending = gross.rental - metaConfirmed
 
-  const periodLabel = month === null ? `Ano de ${year}` : `${MONTH_LONG_LABELS[month - 1]} de ${year}`
+  const periodLabel = customRange
+    ? activeRange
+      ? `${formatDateBR(activeRange.from)} a ${formatDateBR(activeRange.to)}`
+      : 'Período personalizado'
+    : month === null
+      ? `Ano de ${year}`
+      : `${MONTH_LONG_LABELS[month - 1]} de ${year}`
+
+  /** Mês clicado no gráfico ou na lista: sai do período personalizado. */
+  const selectMonth = (value: number | null) => {
+    setCustomRange(null)
+    setMonth(value)
+  }
+  /** "Personalizado" começa com o mês (ou ano) que estava na tela. */
+  const startCustomRange = () => {
+    if (customRange) return
+    const pad = (value: number) => String(value).padStart(2, '0')
+    const from = month === null ? `${year}-01-01` : `${year}-${pad(month)}-01`
+    const lastDay = month === null ? 31 : new Date(year, month, 0).getDate()
+    const to = month === null ? `${year}-12-31` : `${year}-${pad(month)}-${pad(lastDay)}`
+    setMonth(null)
+    setCustomRange({ from, to })
+  }
   const years = useMemo(() => Array.from({ length: 6 }, (_, index) => currentYear + 1 - index), [currentYear])
 
   // ---- Edição rápida na linha ----
@@ -697,7 +736,7 @@ export default function RevenueMap() {
             {month !== null && (
               <button
                 type="button"
-                onClick={() => setMonth(null)}
+                onClick={() => selectMonth(null)}
                 className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-sm font-medium text-brand-700 hover:bg-brand-50 dark:text-brand-300 dark:hover:bg-brand-900/30"
               >
                 <X className="h-3.5 w-3.5" aria-hidden="true" />
@@ -708,7 +747,7 @@ export default function RevenueMap() {
           {firstLoad ? (
             <div className="h-72 animate-pulse rounded-lg bg-slate-100 dark:bg-slate-800" />
           ) : (
-            <RevenueChart data={chartData} metric={metric} selectedMonth={month} onSelectMonth={setMonth} theme={theme} />
+            <RevenueChart data={chartData} metric={metric} selectedMonth={customRange ? null : month} onSelectMonth={selectMonth} theme={theme} />
           )}
         </div>
       </section>
@@ -740,10 +779,14 @@ export default function RevenueMap() {
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <Segmented
-              label="Mês"
-              value={month ?? 0}
-              onChange={(value) => setMonth(value === 0 ? null : value)}
-              options={[{ value: 0, label: 'Ano todo' }, ...MONTH_SHORT_LABELS.map((label, index) => ({ value: index + 1, label }))]}
+              label="Período"
+              value={customRange ? CUSTOM_PERIOD : (month ?? 0)}
+              onChange={(value) => (value === CUSTOM_PERIOD ? startCustomRange() : selectMonth(value === 0 ? null : value))}
+              options={[
+                { value: 0, label: 'Ano todo' },
+                ...MONTH_SHORT_LABELS.map((label, index) => ({ value: index + 1, label })),
+                { value: CUSTOM_PERIOD, label: 'Personalizado' },
+              ]}
             />
             <Segmented
               label="Situação"
@@ -757,6 +800,33 @@ export default function RevenueMap() {
               ]}
             />
           </div>
+          {customRange && (
+            <div className="flex flex-wrap items-end gap-3">
+              <label className="text-sm font-medium text-slate-700 dark:text-slate-200">
+                <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">De</span>
+                <input
+                  type="date"
+                  value={customRange.from}
+                  onChange={(event) => setCustomRange((current) => (current ? moveRangeEdge(current, 'from', event.target.value) : current))}
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+                />
+              </label>
+              <label className="text-sm font-medium text-slate-700 dark:text-slate-200">
+                <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Até</span>
+                <input
+                  type="date"
+                  value={customRange.to}
+                  onChange={(event) => setCustomRange((current) => (current ? moveRangeEdge(current, 'to', event.target.value) : current))}
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+                />
+              </label>
+              <p className={cn('pb-2 text-xs', customInvalid ? 'font-medium text-red-600 dark:text-red-400' : 'text-slate-500 dark:text-slate-400')}>
+                {customInvalid
+                  ? 'Informe as duas datas, com a inicial antes ou igual à final.'
+                  : 'Pela data do evento, as duas datas inclusive. Se uma data passar da outra, a outra acompanha.'}
+              </p>
+            </div>
+          )}
           <p className="text-xs text-slate-500 dark:text-slate-400">
             Propostas perdidas não entram. Mudar a situação para Confirmado ou Realizado fecha a proposta; À confirmar volta para Em aberto.
           </p>
@@ -778,7 +848,7 @@ export default function RevenueMap() {
           <p className="px-5 py-14 text-center text-sm text-slate-500 dark:text-slate-400">Nenhum evento em {periodLabel.toLowerCase()} com esse filtro.</p>
         ) : (
           <HorizontalScrollArea label="Planilha de eventos">
-            <table className="w-full min-w-[1700px] text-left text-sm">
+            <table className="w-full min-w-[1840px] text-left text-sm">
               <thead className="sticky top-0 z-10 whitespace-nowrap bg-slate-50 shadow-[inset_0_-1px_0_theme(colors.slate.200)] dark:bg-slate-950 dark:shadow-[inset_0_-1px_0_theme(colors.slate.800)]">
                 <tr>
                   <th scope="col" className={cn(headCell, 'pl-5')}>Data</th>
@@ -796,6 +866,7 @@ export default function RevenueMap() {
                   <th scope="col" className={headCell}>Pagto</th>
                   <th scope="col" className={cn(headCell, 'text-right')}>Total bruto / líquido</th>
                   <th scope="col" className={headCell}>Nº proposta</th>
+                  <th scope="col" className={headCell}>Responsável</th>
                   <th scope="col" className={cn(headCell, 'pr-5')}>Pesquisa</th>
                 </tr>
               </thead>
@@ -873,6 +944,16 @@ export default function RevenueMap() {
                         <p className="text-xs text-slate-500 dark:text-slate-400">Líq. {formatBRL(values.net)}</p>
                       </td>
                       <td className="whitespace-nowrap px-3 py-3 text-slate-600 dark:text-slate-300">{lead.proposal_number || '—'}</td>
+                      <td className="px-3 py-2">
+                        <LeadOwnerCell
+                          key={`${lead.id}:${lead.user_id}`}
+                          leadId={lead.id}
+                          userId={lead.user_id}
+                          logins={logins}
+                          leadLabel={lead.event_name || lead.contact_name}
+                          onError={setActionError}
+                        />
+                      </td>
                       <td className="py-2 pl-3 pr-5">
                         <select
                           aria-label="Pesquisa de satisfação"
@@ -904,7 +985,7 @@ export default function RevenueMap() {
                   <td className="px-3 py-2.5 text-right font-semibold tabular-nums">{formatBRL(gross.parking)}</td>
                   <td colSpan={2} />
                   <td className="px-3 py-2.5 text-right font-bold tabular-nums">{formatBRL(gross.total)}</td>
-                  <td colSpan={2} />
+                  <td colSpan={3} />
                 </tr>
                 <tr className="bg-white dark:bg-slate-900">
                   <td colSpan={6} className={cn(footLabel, 'text-slate-700 dark:text-slate-200')}>
@@ -917,14 +998,14 @@ export default function RevenueMap() {
                   <td className="px-3 py-2.5 text-right font-semibold tabular-nums">{formatBRL(netShare(gross.parking, NET_RATES.parking))}</td>
                   <td colSpan={2} />
                   <td className="px-3 py-2.5 text-right font-bold tabular-nums">{formatBRL(gross.net)}</td>
-                  <td colSpan={2} />
+                  <td colSpan={3} />
                 </tr>
                 <tr className="bg-gradient-to-r from-brand-900 to-brand-600 text-white">
                   <td colSpan={6} className={footLabel}>
                     Total locação de salas
                   </td>
                   <td className="px-3 py-3 text-right text-base font-bold tabular-nums">{formatBRL(metaConfirmed)}</td>
-                  <td colSpan={9} className="px-3 py-3 text-sm text-brand-100">
+                  <td colSpan={10} className="px-3 py-3 text-sm text-brand-100">
                     Confirmado / Realizado · <span className="font-semibold text-white">À confirmar: {formatBRL(metaPending)}</span>
                   </td>
                 </tr>

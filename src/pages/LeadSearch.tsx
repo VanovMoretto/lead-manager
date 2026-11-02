@@ -22,6 +22,7 @@ import {
 } from 'lucide-react'
 import PageHeader from '../components/PageHeader'
 import ExportPreviewModal, { type ExportKind, type ExportPreviewData } from '../components/ExportPreviewModal'
+import LeadOwnerCell from '../components/LeadOwnerCell'
 import StatusBadge from '../components/StatusBadge'
 import WhatsAppButton from '../components/WhatsAppButton'
 import type { LayoutOutletContext } from '../components/Layout'
@@ -30,6 +31,7 @@ import { cn, isRowClick } from '../lib/utils'
 import { formatBRL, formatDateBR } from '../lib/format'
 import { countEventDays, getLeadRooms, getLeadValues, hasAnyValue } from '../lib/leadFields'
 import { useCompanies } from '../hooks/useCompanies'
+import { useUserLogins } from '../hooks/useUserLogins'
 import { toLocalISODate } from '../lib/dashboard'
 import {
   COMPANY_FILTER_WITH,
@@ -227,6 +229,7 @@ export default function LeadSearch() {
   const [preview, setPreview] = useState<ExportPreviewData | null>(null)
   const [generating, setGenerating] = useState(false)
   const [exportFeedback, setExportFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
+  const logins = useUserLogins()
 
   // ---- Busca com atraso (não consulta a cada tecla) ----
   useEffect(() => {
@@ -322,7 +325,7 @@ export default function LeadSearch() {
         return
       }
 
-      const filterLabels = describeFilters(filters)
+      const filterLabels = describeFilters(filters, logins.find((item) => item.user_id === filters.owner)?.login)
       if (kind === 'csv') {
         // O mailing só sai com a lista de opt-out por contato carregada (LGPD); sem ela, não exporta
         let suppressions: Awaited<ReturnType<typeof fetchMarketingSuppressions>>
@@ -578,6 +581,23 @@ export default function LeadSearch() {
               ))}
             </select>
           </FilterField>
+
+          <FilterField label="Responsável" htmlFor="filter-owner">
+            <select
+              id="filter-owner"
+              value={filters.owner}
+              onChange={(event) => updateFilter('owner', event.target.value)}
+              className={controlClassName}
+            >
+              <option value="">Todos</option>
+              {logins.map((item) => (
+                <option key={item.user_id} value={item.user_id}>
+                  {item.login || 'sem login'}
+                  {item.is_active ? '' : ' (inativo)'}
+                </option>
+              ))}
+            </select>
+          </FilterField>
         </div>
 
         {dateRangeInvalid && (
@@ -652,7 +672,7 @@ export default function LeadSearch() {
           </div>
         ) : (
           <div className={cn('overflow-x-auto transition-opacity', loading && 'opacity-60')}>
-            <table className="w-full min-w-[1080px] text-left text-sm">
+            <table className="w-full min-w-[1200px] text-left text-sm">
               <thead className="whitespace-nowrap border-b border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950/50">
                 <tr>
                   <SortableHeader field="created_at" label="Criado em" sort={sort} onSort={handleSort} className="pl-5" />
@@ -666,6 +686,9 @@ export default function LeadSearch() {
                     Proposta
                   </th>
                   <SortableHeader field="status" label="Situação" sort={sort} onSort={handleSort} />
+                  <th scope="col" className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                    Responsável
+                  </th>
                   <th scope="col" className="px-5 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
                     Ações
                   </th>
@@ -746,6 +769,16 @@ export default function LeadSearch() {
                           {lead.loss_reason}
                         </p>
                       )}
+                    </td>
+                    <td className="px-3 py-2.5">
+                      <LeadOwnerCell
+                        key={`${lead.id}:${lead.user_id}`}
+                        leadId={lead.id}
+                        userId={lead.user_id}
+                        logins={logins}
+                        leadLabel={lead.event_name || lead.contact_name}
+                        onError={(message) => setExportFeedback({ type: 'error', message })}
+                      />
                     </td>
                     <td className="px-5 py-3 text-right">
                       <button

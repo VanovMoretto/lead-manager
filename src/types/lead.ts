@@ -116,6 +116,9 @@ export const SURVEY_STATUS_LABELS: Record<SurveyStatus, string> = {
 /** Motivo que torna `loss_reason_details` obrigatório na interface. */
 export const LOSS_REASON_OTHER = 'Outros'
 
+/** Meio de prospecção que pede a cerimonialista que indicou a proposta. */
+export const CEREMONIALIST_ORIGIN = 'Cerimonialista'
+
 /** Linha da tabela `leads`, como retornada pelo Supabase. */
 export type Lead = {
   id: UUID
@@ -220,6 +223,8 @@ export type Lead = {
   client_id: UUID | null
   /** Pessoa do cliente que pediu a proposta (localizada ou criada pelo banco). */
   contact_id: UUID | null
+  /** Cerimonialista que indicou a proposta (meio de prospecção "Cerimonialista"). */
+  ceremonialist_id: UUID | null
 }
 
 /** Colunas que o banco calcula e que nunca são enviadas em INSERT/UPDATE. */
@@ -270,6 +275,7 @@ type LeadNullableFields =
   | 'observations'
   | 'client_id'
   | 'contact_id'
+  | 'ceremonialist_id'
   | 'cnpj'
   | 'event_name'
   | 'pax'
@@ -327,6 +333,7 @@ export const EMPTY_LEAD_FORM: LeadFormData = {
   nf_parking: null,
   payment_status: 'pendente',
   survey_status: 'nao_enviada',
+  ceremonialist_id: null,
 }
 
 /** Filtros da listagem de leads. */
@@ -396,7 +403,7 @@ export type LeadAttachmentInsert = Omit<LeadAttachment, 'id' | 'created_at' | 'u
 // Clientes e pessoas de contato
 // =============================================================================
 
-export const CLIENT_TYPES = ['company', 'individual'] as const
+export const CLIENT_TYPES = ['company', 'individual', 'ceremonialist'] as const
 export type ClientType = (typeof CLIENT_TYPES)[number]
 
 /** Linha da tabela `clients`: empresa ou pessoa física, com o histórico de propostas em `leads.client_id`. */
@@ -444,6 +451,7 @@ export type ClientContactUpdate = Partial<Omit<ClientContactInsert, 'client_id'>
 export const CLIENT_TYPE_LABELS: Record<ClientType, string> = {
   company: 'Empresa',
   individual: 'Pessoa Física',
+  ceremonialist: 'Cerimonialista',
 }
 
 /** Linha da view `client_summaries`: o cliente com o resumo do histórico de propostas. */
@@ -469,6 +477,9 @@ export type ClientSummary = Client & {
 }
 
 /** Linha da tabela `user_profiles` (um perfil por usuário do Supabase Auth). */
+/** Usuário para a coluna Responsável. */
+export type UserLogin = { user_id: UUID; login: string; is_active: boolean }
+
 export type UserProfile = {
   user_id: UUID
   email: string | null
@@ -566,6 +577,15 @@ export type Database = {
         Args: { p_option_id: UUID; p_replacement_id?: UUID }
         Returns: number
       }
+      /** Cria a cerimonialista (cliente) com o contato dela. */
+      create_ceremonialist: {
+        Args: { p_name: string; p_phone?: string | null; p_email?: string | null }
+        Returns: Client
+      }
+      /** ADMIN troca o responsável pela proposta. */
+      admin_set_lead_owner: { Args: { p_lead_id: UUID; p_user_id: UUID }; Returns: UUID }
+      /** Login (e-mail sem o domínio) de cada usuário. */
+      list_user_logins: { Args: Record<string, never>; Returns: UserLogin[] }
       /** O usuário logado tem papel ADMIN? */
       is_admin: { Args: Record<string, never>; Returns: boolean }
       /** ADMIN ativa/desativa um usuário ou muda o papel (campo omitido = mantém). */

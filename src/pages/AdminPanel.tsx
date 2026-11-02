@@ -20,10 +20,12 @@ import type { PostgrestError } from '@supabase/supabase-js'
 import PageHeader from '../components/PageHeader'
 import ToggleSwitch from '../components/ToggleSwitch'
 import UserManagement from '../components/UserManagement'
+import { isCeremonialistOrigin } from '../lib/leadFields'
 import { supabase } from '../lib/supabase'
 import { RateLimitError, guardMutation } from '../lib/rateLimit'
 import { cn } from '../lib/utils'
 import {
+  CEREMONIALIST_ORIGIN,
   LOSS_REASON_OTHER,
   SETTING_CATEGORIES,
   SETTING_CATEGORY_LABELS,
@@ -242,8 +244,10 @@ function OptionRow({ option, toggling, onToggle, onRename, onRequestDelete }: Op
   const [draft, setDraft] = useState(option.label)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  // "Outros" é usado pelo formulário para pedir a descrição do motivo
-  const locked = option.category === 'loss_reason' && option.label === LOSS_REASON_OTHER
+  // "Outros" pede a descrição do motivo e "Cerimonialista" pede quem indicou: o formulário depende dos dois nomes
+  const locked =
+    (option.category === 'loss_reason' && option.label === LOSS_REASON_OTHER) ||
+    (option.category === 'origin' && isCeremonialistOrigin(option.label))
   const inputId = `edit-option-${option.id}`
 
   const startEditing = () => {
@@ -529,6 +533,13 @@ function CategoryCard({ category, options, onAdd, onToggle, onRename, onDelete }
             />
           ))}
         </ul>
+      )}
+
+      {category === 'origin' && (
+        <p className="flex items-start gap-2 border-t border-slate-200 px-5 py-3 text-xs text-slate-500 dark:border-slate-800 dark:text-slate-400">
+          <Info className="mt-px h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          &quot;{CEREMONIALIST_ORIGIN}&quot; não pode ser renomeado nem excluído: ao escolhê-lo, o formulário pede a cerimonialista que indicou.
+        </p>
       )}
 
       {category === 'loss_reason' && (

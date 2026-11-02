@@ -27,6 +27,8 @@ export type LeadSearchFilters = {
    */
   company: string
   lossReason: string
+  /** Responsável (user_id de quem cadastrou) ou vazio. */
+  owner: string
   search: string
 }
 
@@ -40,6 +42,7 @@ export const EMPTY_FILTERS: LeadSearchFilters = {
   origin: '',
   company: '',
   lossReason: '',
+  owner: '',
   search: '',
 }
 
@@ -68,6 +71,7 @@ export function countActiveFilters(filters: LeadSearchFilters): number {
   if (filters.origin) count += 1
   if (filters.company) count += 1
   if (filters.lossReason) count += 1
+  if (filters.owner) count += 1
   if (filters.search.trim()) count += 1
   return count
 }
@@ -143,6 +147,7 @@ function applyFilters<Q extends { eq: any; gte: any; lt: any; lte: any; or: any;
   else if (filters.company === COMPANY_FILTER_WITHOUT) next = next.is('company', null)
   else if (filters.company) next = next.eq('company', filters.company)
   if (filters.lossReason) next = next.eq('loss_reason', filters.lossReason)
+  if (filters.owner) next = next.eq('user_id', filters.owner)
 
   const searchConditions = buildSearchConditions(filters.search)
   if (searchConditions) next = next.or(searchConditions)
@@ -218,7 +223,7 @@ export async function fetchMarketingSuppressions(): Promise<Array<Pick<Marketing
 // Descrição legível dos filtros (cabeçalho do PDF)
 // =============================================================================
 
-export function describeFilters(filters: LeadSearchFilters): string[] {
+export function describeFilters(filters: LeadSearchFilters, ownerLogin?: string): string[] {
   const lines: string[] = []
 
   if (filters.dateFrom || filters.dateTo) {
@@ -234,6 +239,7 @@ export function describeFilters(filters: LeadSearchFilters): string[] {
   else if (filters.company === COMPANY_FILTER_WITHOUT) lines.push('Empresa: pessoa física (sem empresa)')
   else if (filters.company) lines.push(`Empresa: ${filters.company}`)
   if (filters.lossReason) lines.push(`Motivo de perda: ${filters.lossReason}`)
+  if (filters.owner) lines.push(`Responsável: ${ownerLogin || 'usuário selecionado'}`)
   if (filters.search.trim()) lines.push(`Busca: "${filters.search.trim()}"`)
 
   return lines.length > 0 ? lines : ['Sem filtros (todos os leads)']

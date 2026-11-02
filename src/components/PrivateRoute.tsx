@@ -10,7 +10,7 @@ export type RedirectState = { from?: string }
  * guardando a página que o usuário tentou abrir.
  */
 export default function PrivateRoute() {
-  const { session, loading, roleLoading, passwordRecovery } = useAuth()
+  const { session, loading, roleLoading } = useAuth()
   const location = useLocation()
 
   // Espera também o perfil: usuário desativado sai antes de ver qualquer tela
@@ -29,9 +29,6 @@ export default function PrivateRoute() {
     const state: RedirectState = { from: `${location.pathname}${location.search}` }
     return <Navigate to="/login" replace state={state} />
   }
-
-  // Entrou pelo link de "Esqueci minha senha": primeiro define a nova senha
-  if (passwordRecovery) return <Navigate to="/redefinir-senha" replace />
 
   return <Outlet />
 }

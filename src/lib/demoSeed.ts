@@ -45,7 +45,7 @@ export function demoOptions(): Array<{ category: SettingCategory; label: string;
     category: 'room' as const,
     label,
   })),
-  ...['Instagram', 'Google', 'Indicação', 'Site Oficial', 'WhatsApp Comercial', 'Cliente Recorrente'].map((label) => ({
+  ...['Instagram', 'Google', 'Indicação', 'Site Oficial', 'WhatsApp Comercial', 'Cliente Recorrente', 'Cerimonialista'].map((label) => ({
     category: 'origin' as const,
     label,
   })),

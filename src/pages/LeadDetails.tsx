@@ -754,7 +754,8 @@ function ClientLink({ clientId }: { clientId: string }) {
     >
       <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
       <span className="truncate">
-        Ver histórico {client.client_type === 'company' ? 'da empresa' : 'do cliente'}{' '}
+        Ver histórico{' '}
+        {client.client_type === 'company' ? 'da empresa' : client.client_type === 'ceremonialist' ? 'do cerimonialista' : 'do cliente'}{' '}
         <strong className="font-semibold">{client.name}</strong>
       </span>
       <ArrowRight className="h-4 w-4 shrink-0" aria-hidden="true" />

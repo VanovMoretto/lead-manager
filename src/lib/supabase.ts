@@ -71,39 +71,31 @@ const authStorage = {
   },
 }
 
-/**
- * Link de "Esqueci minha senha": o Supabase volta com type=recovery na URL.
- * Lido antes de criar o cliente, que limpa a URL ao processar o link.
- */
-export const isPasswordRecoveryRedirect =
-  typeof window !== 'undefined' && /(^|[#&?])type=recovery(&|$)/.test(`${window.location.hash}&${window.location.search}`)
+// Enquanto o `.env` não estiver preenchido, valores fictícios só para não lançar erro na importação
+export const SUPABASE_URL = supabaseUrl || 'http://localhost:54321'
+export const SUPABASE_ANON_KEY = supabaseAnonKey || 'public-anon-key-not-configured'
 
 /**
  * Cliente Supabase tipado com o schema do banco.
- * Enquanto o `.env` não estiver preenchido, usa valores fictícios só para não
- * lançar erro na importação; nenhuma chamada é feita nesse estado.
+ * Não lê sessão da URL: o link de "Esqueci minha senha" é tratado só na página de nova senha,
+ * por um cliente à parte, e nunca vira login no app.
  * No Modo Demonstração, um cliente local com a mesma interface responde às chamadas.
  */
 // Comparação direta com a variável (e não com `isDemoMode`) para o build descartar o cliente demo fora do modo demo
 export const supabase: SupabaseClient<Database> = import.meta.env.VITE_DEMO_MODE === 'true'
   ? createDemoClient()
-  : createClient<Database>(
-      isSupabaseConfigured ? supabaseUrl : 'http://localhost:54321',
-      isSupabaseConfigured ? supabaseAnonKey : 'public-anon-key-not-configured',
-      {
-        auth: {
-          persistSession: true,
-          autoRefreshToken: true,
-          detectSessionInUrl: true,
-          storage: authStorage,
-        },
+  : createClient<Database>(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: false,
+        storage: authStorage,
       },
-    )
+    })
 
 /**
  * A sessão foi aberta pelo link de "Esqueci minha senha"? O Supabase registra no token
- * como cada login aconteceu (`amr`); só uma sessão de recuperação pode trocar a senha
- * sem informar a atual. Ter `type=recovery` na URL não basta.
+ * como cada login aconteceu (`amr`). Uma sessão assim não vale como login no app.
  */
 export function isRecoverySession(session: { access_token: string } | null): boolean {
   if (!session) return false

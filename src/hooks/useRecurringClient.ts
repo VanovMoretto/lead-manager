@@ -69,6 +69,13 @@ type Signals = {
   domain: string
   company: string
   excludeId?: string
+  /**
+   * Clientes que o telefone, o e-mail e o domínio não podem trazer sozinhos: empresas do contato
+   * que o vendedor recusou ou ainda não respondeu na pergunta de mesclar.
+   */
+  blockedClientIds: string[]
+  /** Contato em conferência ou sem empresa aceita: telefone, e-mail e domínio não contam. */
+  contactSignalsPending: boolean
 }
 
 /** Opt-out pelo mesmo telefone (dígitos) ou e-mail: lista de supressão e leads anteriores. */
@@ -114,9 +121,14 @@ async function findClientMatch({
   domain,
   company,
   excludeId,
+  blockedClientIds,
+  contactSignalsPending,
 }: Signals): Promise<RecurringClientMatch | null> {
   const candidates = new Map<string, Candidate>()
   const add = (clientId: string, reason: ClientMatchReason, contactId: string | null = null) => {
+    if ((reason === 'phone' || reason === 'email' || reason === 'domain') && (contactSignalsPending || blockedClientIds.includes(clientId))) {
+      return
+    }
     const candidate = candidates.get(clientId) ?? { score: 0, reasons: new Set(), contactId: null, contactScore: 0 }
     if (!candidate.reasons.has(reason)) {
       candidate.reasons.add(reason)
@@ -233,11 +245,14 @@ type UseRecurringClientParams = {
   enabled: boolean
   /** Lead a ignorar na busca (o próprio lead, em edição). */
   excludeId?: string
+  blockedClientIds?: string[]
+  contactSignalsPending?: boolean
 }
 
 type RecurringState = { key: string; result: RecurringClientResult }
 
 const EMPTY_RESULT: RecurringClientResult = { match: null, suppressed: false, cnpjLookup: null }
+const NO_IDS: string[] = []
 
 /**
  * Reconhece um cliente já cadastrado enquanto o vendedor digita: pelo telefone, e-mail,
@@ -245,7 +260,17 @@ const EMPTY_RESULT: RecurringClientResult = { match: null, suppressed: false, cn
  * Espera o usuário parar de digitar e só consulta com dados completos.
  * Falhas de rede são silenciosas: o aviso é informativo, e o banco aplica o opt-out de qualquer forma.
  */
-export function useRecurringClient({ cnpj, preferredClientId, phone, email, company, enabled, excludeId }: UseRecurringClientParams) {
+export function useRecurringClient({
+  cnpj,
+  preferredClientId,
+  phone,
+  email,
+  company,
+  enabled,
+  excludeId,
+  blockedClientIds = NO_IDS,
+  contactSignalsPending = false,
+}: UseRecurringClientParams) {
   const cnpjDigits = isValidCNPJ(cnpj) ? onlyDigits(cnpj) : ''
   const phoneDigits = isValidPhoneBR(phone) ? onlyDigits(phone) : ''
   const normalizedEmail = isValidEmail(email) ? email.trim().toLowerCase() : ''
@@ -253,9 +278,10 @@ export function useRecurringClient({ cnpj, preferredClientId, phone, email, comp
   const companyName = normalizeCompanyName(company)
   const normalizedCompany = companyName.length >= MIN_COMPANY_LENGTH ? companyName.toLocaleLowerCase('pt-BR') : ''
   const hasSignal = Boolean(cnpjDigits || phoneDigits || normalizedEmail || normalizedCompany)
+  const blockedKey = [...blockedClientIds].sort().join(',')
   const key =
     enabled && hasSignal
-      ? [cnpjDigits, preferredClientId ?? '', phoneDigits, normalizedEmail, normalizedCompany, excludeId ?? ''].join('|')
+      ? [cnpjDigits, preferredClientId ?? '', phoneDigits, normalizedEmail, normalizedCompany, excludeId ?? '', blockedKey, contactSignalsPending].join('|')
       : ''
 
   const [state, setState] = useState<RecurringState | null>(null)
@@ -272,6 +298,8 @@ export function useRecurringClient({ cnpj, preferredClientId, phone, email, comp
       domain,
       company: normalizedCompany,
       excludeId,
+      blockedClientIds: blockedKey ? blockedKey.split(',') : [],
+      contactSignalsPending,
     }
     const timeout = window.setTimeout(() => {
       Promise.all([findSuppression(signals).catch(() => false), findClientMatch(signals).catch(() => null)])
@@ -291,7 +319,7 @@ export function useRecurringClient({ cnpj, preferredClientId, phone, email, comp
       controller.abort()
       window.clearTimeout(timeout)
     }
-  }, [key, cnpjDigits, preferredClientId, phoneDigits, normalizedEmail, domain, normalizedCompany, excludeId])
+  }, [key, cnpjDigits, preferredClientId, phoneDigits, normalizedEmail, domain, normalizedCompany, excludeId, blockedKey, contactSignalsPending])
 
   const result = key !== '' && state?.key === key ? state.result : EMPTY_RESULT
   const checking = key !== '' && state?.key !== key
@@ -307,8 +335,103 @@ export function useRecurringClient({ cnpj, preferredClientId, phone, email, comp
 /** Escolha do vendedor diante de um cliente reconhecido. */
 export type ClientLinkChoice = {
   clientId: string
-  /** true = "Sim, adicionar ao histórico"; false = "Não, criar cadastro separado". */
+  /** true = "Sim, adicionar ao histórico"; false = "Não adicionar". */
   link: boolean
   /** Pessoa de contato escolhida; nulo = novo contato do cliente. */
   contactId: string | null
 }
+
+// =============================================================================
+// Contato já cadastrado (pelo telefone ou e-mail digitado)
+// =============================================================================
+
+export type KnownContactClient = Pick<Client, 'id' | 'name' | 'client_type' | 'cnpj' | 'branch_label'>
+
+export type KnownContact = {
+  contact: ClientContact
+  client: KnownContactClient
+  /** Reconhecido pelo telefone (senão, pelo e-mail). */
+  byPhone: boolean
+}
+
+async function findKnownContacts(phoneDigits: string, email: string, signal: AbortSignal): Promise<KnownContact[]> {
+  const [byPhone, byEmail] = await Promise.all([
+    phoneDigits
+      ? supabase
+          .from('client_contacts')
+          .select(CONTACT_COLUMNS)
+          .eq('phone_digits', phoneDigits)
+          .order('created_at', { ascending: false })
+          .limit(MAX_ROWS_PER_QUERY)
+          .abortSignal(signal)
+      : null,
+    email
+      ? supabase
+          .from('client_contacts')
+          .select(CONTACT_COLUMNS)
+          .ilike('email', escapeLikePattern(email))
+          .order('created_at', { ascending: false })
+          .limit(MAX_ROWS_PER_QUERY)
+          .abortSignal(signal)
+      : null,
+  ])
+  if (byPhone?.error) throw byPhone.error
+  if (byEmail?.error) throw byEmail.error
+
+  const found = new Map<string, { contact: ClientContact; byPhone: boolean }>()
+  byPhone?.data?.forEach((contact) => found.set(contact.id, { contact, byPhone: true }))
+  byEmail?.data?.forEach((contact) => {
+    if (!found.has(contact.id)) found.set(contact.id, { contact, byPhone: false })
+  })
+  if (found.size === 0) return []
+
+  const clientIds = [...new Set([...found.values()].map((item) => item.contact.client_id))]
+  const { data: clients, error } = await supabase.from('clients').select(CLIENT_COLUMNS).in('id', clientIds).abortSignal(signal)
+  if (error) throw error
+
+  return [...found.values()].flatMap(({ contact, byPhone: phoneMatch }) => {
+    const client = clients?.find((item) => item.id === contact.client_id)
+    return client ? [{ contact, client, byPhone: phoneMatch }] : []
+  })
+}
+
+const NO_CONTACTS: KnownContact[] = []
+
+type KnownContactsState = { key: string; contacts: KnownContact[] }
+
+/**
+ * Procura a pessoa de contato pelo telefone ou e-mail digitado (e as empresas a que ela está ligada).
+ * Falha silenciosa: sem resposta, o formulário segue como contato novo.
+ */
+export function useKnownContacts({ phone, email, enabled }: { phone: string; email: string; enabled: boolean }) {
+  const phoneDigits = isValidPhoneBR(phone) ? onlyDigits(phone) : ''
+  const normalizedEmail = isValidEmail(email) ? email.trim().toLowerCase() : ''
+  const key = enabled && (phoneDigits || normalizedEmail) ? `${phoneDigits}|${normalizedEmail}` : ''
+  const [state, setState] = useState<KnownContactsState | null>(null)
+
+  useEffect(() => {
+    if (!key) return
+    let isActive = true
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => {
+      findKnownContacts(phoneDigits, normalizedEmail, controller.signal)
+        .catch(() => [])
+        .then((contacts) => {
+          if (isActive) setState({ key, contacts })
+        })
+    }, DEBOUNCE_MS)
+    return () => {
+      isActive = false
+      controller.abort()
+      window.clearTimeout(timeout)
+    }
+  }, [key, phoneDigits, normalizedEmail])
+
+  const ready = key !== '' && state?.key === key
+  return {
+    key,
+    checking: key !== '' && !ready,
+    contacts: ready ? state.contacts : NO_CONTACTS,
+  }
+}
+

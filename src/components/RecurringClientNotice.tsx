@@ -113,6 +113,8 @@ function ClientMatchCard({ match, choice, locked, onLinkChange, onSelectContact,
   const target = isCompany ? 'da empresa' : 'do cliente'
   const { last } = match
   const lastRooms = last ? getLeadRooms(last) : []
+  // Do contato mais antigo ao mais novo, depois de "Novo contato"
+  const contactsByAge = [...match.contacts].sort((a, b) => a.created_at.localeCompare(b.created_at))
 
   return (
     <section
@@ -125,7 +127,13 @@ function ClientMatchCard({ match, choice, locked, onLinkChange, onSelectContact,
         </span>
         <div className="min-w-0 leading-snug">
           <p className="text-[11px] font-semibold uppercase tracking-wide text-brand-700 dark:text-brand-300">
-            {locked ? 'Proposta para o cliente' : isCompany ? 'Empresa já cadastrada' : 'Cliente já cadastrado'}
+            {locked
+              ? 'Proposta para o cliente'
+              : isCompany
+                ? 'Empresa já cadastrada'
+                : match.client.client_type === 'ceremonialist'
+                  ? 'Cerimonialista já cadastrada'
+                  : 'Cliente já cadastrado'}
           </p>
           <p className="truncate text-base font-semibold text-slate-900 dark:text-white">{match.client.name}</p>
           {branchText && <p className="text-xs font-medium text-slate-600 dark:text-slate-300">{branchText}</p>}
@@ -189,33 +197,39 @@ function ClientMatchCard({ match, choice, locked, onLinkChange, onSelectContact,
           </>
         ) : (
           <>
-            <p className="font-medium text-slate-900 dark:text-white">
-              Adicionar ao histórico {target} <span className="font-semibold">{match.client.name}</span>?
+            <p id="client-link-question" className="font-medium text-slate-900 dark:text-white">
+              Deseja adicionar esta proposta ao histórico {target} <span className="font-semibold">{match.client.name}</span>?
             </p>
-            <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2" role="group" aria-label={`Adicionar ao histórico ${target}`}>
-              <ChoiceButton selected={choice.link} onClick={() => onLinkChange(true)}>
-                Sim, adicionar ao histórico
-              </ChoiceButton>
-              <ChoiceButton selected={!choice.link} onClick={() => onLinkChange(false)}>
-                Não, criar cadastro separado
-              </ChoiceButton>
+            <div className="mt-2 space-y-1.5" role="radiogroup" aria-labelledby="client-link-question">
+              <RadioRow selected={choice.link} onSelect={() => onLinkChange(true)} label="Sim, adicionar ao histórico" />
+              <RadioRow selected={!choice.link} onSelect={() => onLinkChange(false)} label="Não adicionar" />
             </div>
-            <p className="mt-2 flex items-center gap-1.5 text-xs font-medium text-slate-600 dark:text-slate-300" aria-live="polite">
-              <Check className={cn('h-3.5 w-3.5', choice.link ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-400')} aria-hidden="true" />
+            <p className="mt-2 flex items-start gap-1.5 text-xs font-medium text-slate-600 dark:text-slate-300" aria-live="polite">
+              <Check
+                className={cn('mt-px h-3.5 w-3.5 shrink-0', choice.link ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-400')}
+                aria-hidden="true"
+              />
               {choice.link
                 ? `Ao salvar, a proposta entra no histórico ${target} ${match.client.name}${match.client.cnpj ? ` (CNPJ ${match.client.cnpj})` : ''}.`
-                : 'Ao salvar, a proposta cria um cadastro novo, separado deste.'}
+                : isCompany
+                  ? 'Ao salvar, a proposta fica como pessoa física de quem a pediu. Empresa e CNPJ não serão salvos.'
+                  : 'Ao salvar, a proposta cria um cadastro novo, separado deste.'}
             </p>
           </>
         )}
 
         {choice.link && match.contacts.length > 0 && (
           <div className="mt-3">
-            <p className="text-xs font-medium text-slate-600 dark:text-slate-300">
-              {isCompany ? 'Quem da empresa está pedindo esta proposta?' : 'Quem está pedindo esta proposta?'}
-            </p>
+            <p className="text-xs font-medium text-slate-600 dark:text-slate-300">Quem está solicitando esta proposta?</p>
             <div className="mt-1.5 flex flex-wrap gap-2" role="radiogroup" aria-label="Pessoa de contato">
-              {match.contacts.map((contact) => (
+              <ContactOption
+                selected={choice.contactId === null}
+                onClick={() => onSelectContact(null)}
+                title="Novo contato"
+                detail="Adicionar novo contato"
+                icon={UserPlus}
+              />
+              {contactsByAge.map((contact) => (
                 <ContactOption
                   key={contact.id}
                   selected={choice.contactId === contact.id}
@@ -224,13 +238,6 @@ function ClientMatchCard({ match, choice, locked, onLinkChange, onSelectContact,
                   detail={[contact.role, contact.phone, contact.email].filter(Boolean).join(' · ')}
                 />
               ))}
-              <ContactOption
-                selected={choice.contactId === null}
-                onClick={() => onSelectContact(null)}
-                title="Novo contato"
-                detail={isCompany ? 'Outra pessoa da empresa' : 'Outra pessoa'}
-                icon={UserPlus}
-              />
             </div>
           </div>
         )}
@@ -248,21 +255,30 @@ function Stat({ label, value }: { label: string; value: string }) {
   )
 }
 
-function ChoiceButton({ selected, onClick, children }: { selected: boolean; onClick: () => void; children: string }) {
+function RadioRow({ selected, onSelect, label }: { selected: boolean; onSelect: () => void; label: string }) {
   return (
     <button
       type="button"
-      aria-pressed={selected}
-      onClick={onClick}
+      role="radio"
+      aria-checked={selected}
+      onClick={onSelect}
       className={cn(
-        'flex items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500',
+        'flex w-full items-center gap-2.5 rounded-lg border px-3 py-2 text-left text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500',
         selected
-          ? 'border-brand-600 bg-brand-600 text-white shadow-sm'
-          : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800',
+          ? 'border-brand-600 bg-white text-slate-900 ring-1 ring-brand-600 dark:bg-slate-900 dark:text-white'
+          : 'border-slate-200 bg-white/70 text-slate-700 hover:border-brand-300 dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-200 dark:hover:border-brand-700',
       )}
     >
-      {selected && <Check className="h-4 w-4" aria-hidden="true" />}
-      {children}
+      <span
+        className={cn(
+          'flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2',
+          selected ? 'border-brand-600' : 'border-slate-300 dark:border-slate-600',
+        )}
+        aria-hidden="true"
+      >
+        {selected && <span className="h-2 w-2 rounded-full bg-brand-600" />}
+      </span>
+      {label}
     </button>
   )
 }

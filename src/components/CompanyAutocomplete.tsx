@@ -21,6 +21,7 @@ type CompanyAutocompleteProps = {
   placeholder?: string
   maxLength?: number
   describedBy?: string
+  disabled?: boolean
 }
 
 /** Campo Empresa com sugestões das empresas já cadastradas (nome, braço e CNPJ). */
@@ -34,6 +35,7 @@ export default function CompanyAutocomplete({
   placeholder,
   maxLength,
   describedBy,
+  disabled = false,
 }: CompanyAutocompleteProps) {
   const listId = useId()
   const [open, setOpen] = useState(false)
@@ -101,6 +103,7 @@ export default function CompanyAutocomplete({
         maxLength={maxLength}
         placeholder={placeholder}
         value={value}
+        disabled={disabled}
         aria-expanded={expanded}
         aria-controls={listId}
         aria-autocomplete="list"

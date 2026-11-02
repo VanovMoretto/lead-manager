@@ -203,6 +203,7 @@ const LEAD_DEFAULTS: Omit<Lead, 'id' | 'created_at' | 'updated_at' | 'contact_na
   cnpj_digits: null,
   client_id: null,
   contact_id: null,
+  ceremonialist_id: null,
 }
 
 const LEAD_GENERATED = ['contact_phone_digits', 'total_value', 'net_value', 'event_last_date', 'cnpj_digits'] as const
@@ -1140,7 +1141,7 @@ class DemoQueryBuilder implements PromiseLike<DemoResponse> {
 
 function buildClientSummaries(current: DemoDb): ClientSummary[] {
   return current.clients.map((client) => {
-    const leads = current.leads.filter((lead) => lead.client_id === client.id)
+    const leads = current.leads.filter((lead) => lead.client_id === client.id || lead.ceremonialist_id === client.id)
     const contacts = current.client_contacts.filter((contact) => contact.client_id === client.id)
     const primary = [...contacts].sort(
       (a, b) => Number(b.is_primary) - Number(a.is_primary) || Number(b.active) - Number(a.active) || a.created_at.localeCompare(b.created_at),
@@ -1455,6 +1456,35 @@ class DemoRpcBuilder implements PromiseLike<DemoResponse> {
         return option
       }
 
+      case 'create_ceremonialist': {
+        if (!current.user_profiles.some((profile) => profile.user_id === userId && profile.is_active)) {
+          throw new DemoDbError('42501', 'inactive_user')
+        }
+        const name = String(args.p_name ?? '').trim().replace(/\s+/g, ' ')
+        if (!name) throw new DemoDbError('23514', 'empty_name')
+        if (current.clients.some((client) => client.client_type === 'ceremonialist' && sameText(client.name, name))) {
+          throw new DemoDbError('23505', 'duplicate key value violates unique constraint "clients_ceremonialist_name_key"')
+        }
+        const client = insertClient(current, { name, client_type: 'ceremonialist' })
+        findOrCreateContact(current, client.id, name, trimOrNull(args.p_phone as string | null), trimOrNull(args.p_email as string | null))
+        return client
+      }
+
+      case 'admin_set_lead_owner': {
+        requireAdmin(isAdmin)
+        if (!current.user_profiles.some((profile) => profile.user_id === args.p_user_id)) throw new DemoDbError('P0002', 'user_not_found')
+        const lead = current.leads.find((item) => item.id === args.p_lead_id)
+        if (!lead) throw new DemoDbError('P0002', 'lead_not_found')
+        lead.user_id = args.p_user_id as string
+        return args.p_user_id
+      }
+
+      case 'list_user_logins':
+        if (!current.user_profiles.some((profile) => profile.user_id === userId && profile.is_active)) return []
+        return current.user_profiles
+          .map((profile) => ({ user_id: profile.user_id, login: (profile.email ?? '').split('@')[0], is_active: profile.is_active }))
+          .sort((a, b) => a.login.localeCompare(b.login))
+
       case 'admin_delete_setting_option': {
         requireAdmin(isAdmin)
         const option = current.app_settings_options.find((item) => item.id === args.p_option_id)
@@ -1752,6 +1782,17 @@ const demoAuth = {
     }
     emitAuth('USER_UPDATED', session)
     return { data: { user: session.user }, error: null }
+  },
+
+  async verifyOtp(params: unknown) {
+    void params
+    await delay()
+    return { data: { user: null, session: null }, error: authError('otp_expired', 'Token has expired or is invalid', 403) }
+  },
+
+  async setSession(params: unknown) {
+    void params
+    return { data: { user: null, session: null }, error: authError('session_not_found', 'Auth session missing!', 401) }
   },
 
   async resetPasswordForEmail(email: string, options?: unknown) {
