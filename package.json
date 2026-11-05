@@ -39,5 +39,5 @@
     "typescript": "~6.0.3",
     "vite": "^8.3.4"
   },
-  "homepage": "https://vanovmoretto.github.io/lead-manager/"
+  "homepage": "https://gestao-de-propostas.vercel.app"
 }

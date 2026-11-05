@@ -2,7 +2,7 @@
 
 Micro-CRM para equipes comerciais de espaços de eventos: cadastro rápido de leads, acompanhamento de propostas, follow-up e indicadores de conversão.
 
-**Demo:** https://vanovmoretto.github.io/lead-manager/ (acesso com usuário cadastrado no Supabase)
+**App:** https://gestao-de-propostas.vercel.app (acesso com usuário cadastrado no Supabase)
 
 ## Funcionalidades
 
@@ -82,7 +82,7 @@ No SQL Editor do Supabase:
 
 1. **Projeto novo**: rode `supabase/schema.sql`. Ele cria as tabelas, as políticas de acesso (apenas usuários autenticados) e os motivos de perda padrão.
 2. **Projeto já existente**: rode as migrações de `supabase/migrations/` em ordem (002 a 017). Todas podem ser executadas mais de uma vez sem duplicar dados. A 007 cria os perfis de usuário (copiando os ADMINs da antiga tabela `app_admins`), a coluna de observações, a tabela de anexos e os buckets privados `lead-attachments` e `avatars` do Storage. A 008 adiciona o limite de 20 leads por minuto por usuário e o tamanho máximo dos campos de texto. A 009 cria os clientes e as pessoas de contato e agrupa as propostas existentes (por empresa ou, para pessoa física, pelo mesmo telefone ou e-mail). A 010 cria a view `client_summaries`, usada na tela Consultar Leads. A 011 adiciona o CNPJ de empresas e propostas e os braços (matriz, filiais e franquias com CNPJ próprio). A 012 adiciona o faturamento dos eventos: nome do evento, PAX, situação operacional, equipamentos e estacionamento, a Receita Líquida do Hotel, NFs, pagamento e pesquisa de satisfação. A 013 faz os usuários novos nascerem sem acesso: um ADMIN ativa cada um no Painel Admin → Usuários. A 014 fixa a autoria das propostas: quem cadastrou não muda nas edições. A 015 permite ao ADMIN corrigir o nome e excluir salas, meios de prospecção e motivos de perda. A 016 cria as cerimonialistas (tipo de cliente e meio de prospecção "Cerimonialista") e a coluna Responsável, que só o ADMIN troca. A 017 traz correções de segurança (usuário desativado barrado antes dos triggers das propostas, data de criação definida pelo banco, opt-out LGPD que não apaga o de outras pessoas, anexos de propostas excluídas fora do alcance dos usuários comuns, caminhos de arquivo validados) e cria as campanhas de mailing, o registro de envios (WhatsApp e e-mail) e a nota da pesquisa de satisfação.
-3. **Recuperação de senha**: em Authentication → URL Configuration, inclua em *Redirect URLs* o endereço da tela de nova senha, por exemplo `https://vanovmoretto.github.io/lead-manager/redefinir-senha` e `http://localhost:5173/redefinir-senha` (e o endereço do Vercel). Para também mandar o código, em Authentication → Email Templates → *Reset Password* acrescente `{{ .Token }}` ao texto, por exemplo: `<p>Ou digite este código na tela de nova senha: <strong>{{ .Token }}</strong></p>`.
+3. **Recuperação de senha**: em Authentication → URL Configuration, inclua em *Redirect URLs* o endereço da tela de nova senha, por exemplo `https://gestao-de-propostas.vercel.app/redefinir-senha` e `http://localhost:5173/redefinir-senha`. Para também mandar o código, em Authentication → Email Templates → *Reset Password* acrescente `{{ .Token }}` ao texto, por exemplo: `<p>Ou digite este código na tela de nova senha: <strong>{{ .Token }}</strong></p>`.
 4. **Dados de teste (opcional)**: `supabase/seed_leads_teste.sql` cria 11 leads fictícios, que podem ser removidos com o comando indicado no próprio arquivo.
 
 ## Usuários e papéis
@@ -119,17 +119,11 @@ where email = 'admin@suaempresa.com.br';
 | `npm run build:demo` | Build do Modo Demonstração (portfólio) |
 | `npm run lint` | Análise estática do código |
 | `npm run preview` | Pré-visualização do build |
-| `npm run deploy` | Build para o GitHub Pages e publicação na branch `gh-pages` |
+| `npm run deploy` | Build para o GitHub Pages e publicação na branch `gh-pages` (opcional; o app hoje está na Vercel) |
 
 ## Deploy
 
-### GitHub Pages
-
-```bash
-npm run deploy
-```
-
-O build é gerado com o prefixo `/lead-manager/` e publicado na branch `gh-pages`. Uma cópia do `index.html` como `404.html` garante que atualizar a página em qualquer rota continue funcionando. As variáveis do `.env` são incorporadas no build.
+O app está publicado na Vercel, ligada a este repositório: cada push na `main` gera um deploy novo do app (projeto `gestao-de-propostas`) e da versão de portfólio (projeto `lead-manager-demo`).
 
 ### Vercel, Netlify ou Cloudflare Pages
 
@@ -138,6 +132,14 @@ Use `npm run build` com a pasta `dist`. Os arquivos `vercel.json` e `public/_red
 ### Versão de portfólio (Vercel)
 
 Crie um projeto separado na Vercel apontando para o mesmo repositório, com **Build Command** `npm run build:demo` e **Output Directory** `dist` (Framework Preset: Vite). Não cadastre as chaves do Supabase nesse projeto: o build do demo usa só o `.env.demo` e não acessa nenhum banco.
+
+### GitHub Pages (opcional)
+
+```bash
+npm run deploy
+```
+
+O build é gerado com o prefixo `/lead-manager/` e publicado na branch `gh-pages` (é preciso ativar o GitHub Pages nas configurações do repositório). Uma cópia do `index.html` como `404.html` garante que atualizar a página em qualquer rota continue funcionando. As variáveis do `.env` são incorporadas no build.
 
 ## Segurança
 
