@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
-import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
+import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom'
 import {
   Building2,
   ChevronRight,
@@ -20,7 +20,7 @@ import AppLogo from './AppLogo'
 import { cn } from '../lib/utils'
 import type { Lead } from '../types/lead'
 import type { RecurringClientMatch } from '../hooks/useRecurringClient'
-import LeadFormModal, { type LeadFormMode } from './LeadFormModal'
+import LeadFormModal from './LeadFormModal'
 import ThemeToggle from './ThemeToggle'
 import UserAvatar from './UserAvatar'
 
@@ -33,8 +33,8 @@ export type LayoutOutletContext = {
   openNewLead: () => void
   /** Abre o cadastro de proposta já vinculado a um cliente (página do cliente). */
   openNewLeadForClient: (client: RecurringClientMatch) => void
-  /** Abre o mesmo formulário preenchido para edição. */
-  openEditLead: (lead: Lead) => void
+  /** Mostra o aviso de sucesso no canto da tela. */
+  showToast: (message: string) => void
   /** Muda a cada lead salvo: use como dependência para recarregar listas e indicadores. */
   leadsVersion: number
 }
@@ -181,30 +181,22 @@ function SidebarContent({ onNewLead, onNavigate }: SidebarContentProps) {
 }
 
 export default function Layout() {
-  const [leadForm, setLeadForm] = useState<{ open: boolean; lead: Lead | null; client: RecurringClientMatch | null }>({
+  const [leadForm, setLeadForm] = useState<{ open: boolean; client: RecurringClientMatch | null }>({
     open: false,
-    lead: null,
     client: null,
   })
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const [leadsVersion, setLeadsVersion] = useState(0)
   const [toast, setToast] = useState<{ id: number; message: string } | null>(null)
-  const location = useLocation()
-  const navigate = useNavigate()
 
   const openNewLead = useCallback(() => {
     setIsMobileMenuOpen(false)
-    setLeadForm({ open: true, lead: null, client: null })
+    setLeadForm({ open: true, client: null })
   }, [])
 
   const openNewLeadForClient = useCallback((client: RecurringClientMatch) => {
     setIsMobileMenuOpen(false)
-    setLeadForm({ open: true, lead: null, client })
-  }, [])
-
-  const openEditLead = useCallback((lead: Lead) => {
-    setIsMobileMenuOpen(false)
-    setLeadForm({ open: true, lead, client: null })
+    setLeadForm({ open: true, client })
   }, [])
 
   const closeLeadForm = useCallback(() => {
@@ -212,25 +204,12 @@ export default function Layout() {
     setLeadForm((current) => ({ ...current, open: false }))
   }, [])
 
-  const handleLeadSaved = useCallback((lead: Lead, mode: LeadFormMode) => {
+  const handleLeadSaved = useCallback((lead: Lead) => {
     setLeadsVersion((current) => current + 1)
-    setToast({
-      id: Date.now(),
-      message: mode === 'create' ? `Proposta de "${lead.contact_name}" cadastrada.` : `Proposta de "${lead.contact_name}" atualizada.`,
-    })
+    setToast({ id: Date.now(), message: `Proposta de "${lead.contact_name}" cadastrada.` })
   }, [])
 
-  const handleLeadDeleted = useCallback(
-    (lead: Lead) => {
-      setLeadsVersion((current) => current + 1)
-      setToast({ id: Date.now(), message: `Proposta de "${lead.contact_name}" excluída.` })
-      // Estava nos detalhes da proposta excluída: volta para a página do cliente ou para a consulta
-      if (location.pathname === `/propostas/${lead.id}`) {
-        navigate(lead.client_id ? `/leads/${lead.client_id}` : '/propostas', { replace: true })
-      }
-    },
-    [location.pathname, navigate],
-  )
+  const showToast = useCallback((message: string) => setToast({ id: Date.now(), message }), [])
 
   // Esconde o aviso de sucesso depois de alguns segundos
   useEffect(() => {
@@ -249,7 +228,7 @@ export default function Layout() {
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [isMobileMenuOpen])
 
-  const outletContext: LayoutOutletContext = { openNewLead, openNewLeadForClient, openEditLead, leadsVersion }
+  const outletContext: LayoutOutletContext = { openNewLead, openNewLeadForClient, showToast, leadsVersion }
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950">
@@ -329,11 +308,9 @@ export default function Layout() {
 
       <LeadFormModal
         open={leadForm.open}
-        lead={leadForm.lead}
         presetClient={leadForm.client}
         onClose={closeLeadForm}
         onSaved={handleLeadSaved}
-        onDeleted={handleLeadDeleted}
       />
 
       {/* Aviso de sucesso */}

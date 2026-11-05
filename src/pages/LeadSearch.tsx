@@ -26,6 +26,7 @@ import LeadOwnerCell from '../components/LeadOwnerCell'
 import StatusBadge from '../components/StatusBadge'
 import WhatsAppButton from '../components/WhatsAppButton'
 import type { LayoutOutletContext } from '../components/Layout'
+import type { ProposalPageState } from '../lib/leadForm'
 import { useSettingsOptions } from '../hooks/useSettingsOptions'
 import { cn, isRowClick } from '../lib/utils'
 import { formatBRL, formatDateBR } from '../lib/format'
@@ -212,7 +213,7 @@ function ExportButton({ kind, label, icon: Icon, busy, disabled, onClick }: Expo
 // =============================================================================
 
 export default function LeadSearch() {
-  const { openEditLead, leadsVersion } = useOutletContext<LayoutOutletContext>()
+  const { leadsVersion } = useOutletContext<LayoutOutletContext>()
   const navigate = useNavigate()
   const { options } = useSettingsOptions({ includeInactive: true })
   // Empresas já cadastradas (recarrega quando um lead é salvo)
@@ -783,7 +784,7 @@ export default function LeadSearch() {
                     <td className="px-5 py-3 text-right">
                       <button
                         type="button"
-                        onClick={() => openEditLead(lead)}
+                        onClick={() => navigate(`/propostas/${lead.id}`, { state: { edit: true } satisfies ProposalPageState })}
                         aria-label={`Editar ${lead.contact_name}`}
                         className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold text-slate-700 transition-colors hover:border-brand-200 hover:bg-brand-50 hover:text-brand-800 dark:border-slate-700 dark:text-slate-200 dark:hover:border-brand-800 dark:hover:bg-brand-900/30 dark:hover:text-white"
                       >

@@ -30,6 +30,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import type { LayoutOutletContext } from '../components/Layout'
+import type { ProposalPageState } from '../lib/leadForm'
 import ClientMetricsPanel, { type ClientMetricsView } from '../components/ClientMetricsPanel'
 import ClientTypeBadge from '../components/ClientTypeBadge'
 import ContactFormModal from '../components/ContactFormModal'
@@ -816,7 +817,7 @@ function ContactCard({
 
 export default function ClientDashboard() {
   const { clientId = '' } = useParams()
-  const { openEditLead, openNewLeadForClient, leadsVersion } = useOutletContext<LayoutOutletContext>()
+  const { openNewLeadForClient, leadsVersion } = useOutletContext<LayoutOutletContext>()
   const { isAdmin } = useAuth()
   const confirm = useConfirm()
   const [deleteModal, setDeleteModal] = useState(false)
@@ -1231,7 +1232,7 @@ export default function ClientDashboard() {
                           </Link>
                           <button
                             type="button"
-                            onClick={() => openEditLead(lead)}
+                            onClick={() => navigate(`/propostas/${lead.id}`, { state: { edit: true } satisfies ProposalPageState })}
                             aria-label={`Editar proposta de ${lead.contact_name}`}
                             className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold text-slate-700 transition-colors hover:border-brand-200 hover:bg-brand-50 hover:text-brand-800 dark:border-slate-700 dark:text-slate-200 dark:hover:border-brand-800 dark:hover:bg-brand-900/30"
                           >

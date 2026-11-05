@@ -1,12 +1,15 @@
-import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent, type ReactNode } from 'react'
-import { Link, useOutletContext, useParams } from 'react-router-dom'
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
+import { Link, useLocation, useNavigate, useOutletContext, useParams } from 'react-router-dom'
 import {
   ArrowLeft,
   ArrowRight,
+  BadgeCheck,
   BedDouble,
   Building2,
   Car,
   CalendarDays,
+  Check,
   CircleAlert,
   CircleCheck,
   CircleX,
@@ -23,6 +26,7 @@ import {
   Paperclip,
   Pencil,
   Phone,
+  Plus,
   Receipt,
   RefreshCw,
   Save,
@@ -31,15 +35,35 @@ import {
   Upload,
   UtensilsCrossed,
   UserRound,
+  X,
   type LucideIcon,
 } from 'lucide-react'
+import CeremonialistFormModal from '../components/CeremonialistFormModal'
+import CompanyAutocomplete from '../components/CompanyAutocomplete'
 import type { LayoutOutletContext } from '../components/Layout'
+import { Field, MoneyInput, YesNoToggle } from '../components/LeadFormFields'
 import StatusBadge from '../components/StatusBadge'
 import WhatsAppButton from '../components/WhatsAppButton'
 import { useAuth } from '../contexts/AuthContext'
+import { useCeremonialists } from '../hooks/useCeremonialists'
+import { useCompanyOptions } from '../hooks/useCompanies'
 import { useConfirm } from '../hooks/useConfirm'
-import { formatBRL, isValidEmail } from '../lib/format'
-import { NET_RATES, NET_RATES_LABEL, formatLeadEventPeriod, getLeadRooms, getLeadValues, hasAnyValue } from '../lib/leadFields'
+import { useLeadSectionDraft, withStatus, type LeadSectionDraft } from '../hooks/useLeadSectionDraft'
+import { useSettingsOptions } from '../hooks/useSettingsOptions'
+import { lookupCnpj } from '../lib/cnpj'
+import { formatCNPJ, formatCentsBRL, formatPhoneBR, isValidCNPJ, isValidEmail, onlyDigits } from '../lib/format'
+import { NET_RATES, NET_RATES_LABEL, countEventDays, formatLeadEventPeriod, getLeadRooms, isCeremonialistOrigin } from '../lib/leadFields'
+import {
+  NEW_CEREMONIALIST,
+  STATUS_OPTIONS,
+  computeNetCents,
+  computeTotalCents,
+  inputClassName,
+  needsLossDetails,
+  needsProposalNumber,
+  withCurrentValue,
+  type ProposalPageState,
+} from '../lib/leadForm'
 import {
   ATTACHMENT_ACCEPT,
   ATTACHMENT_FORMATS_LABEL,
@@ -48,6 +72,7 @@ import {
   downloadLeadAttachment,
   fetchLeadAttachments,
   openLeadAttachment,
+  removeLeadFolders,
   uploadLeadAttachment,
 } from '../lib/leadAttachments'
 import { formatFileSize } from '../lib/storage'
@@ -57,11 +82,12 @@ import { cn } from '../lib/utils'
 import {
   ATTACHMENT_KINDS,
   ATTACHMENT_KIND_LABELS,
+  DEFAULT_LOSS_REASONS,
+  LOSS_REASON_OTHER,
   type AttachmentKind,
   type Client,
   type Lead,
   type LeadAttachment,
-  type LeadStatus,
   OPERATIONAL_STATUSES,
   OPERATIONAL_STATUS_LABELS,
   PAYMENT_STATUSES,
@@ -509,23 +535,8 @@ function AttachmentsCard({ leadId }: { leadId: string }) {
 }
 
 // =============================================================================
-// Página
+// Pós-evento e cliente
 // =============================================================================
-
-const QUICK_ACTIONS: Array<{ status: LeadStatus; label: string; icon: LucideIcon; className: string }> = [
-  {
-    status: 'fechado',
-    label: 'Fechou',
-    icon: CircleCheck,
-    className: 'border-emerald-200 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-900/60 dark:text-emerald-400 dark:hover:bg-emerald-950/40',
-  },
-  {
-    status: 'perdido',
-    label: 'Perdeu',
-    icon: CircleX,
-    className: 'border-red-200 text-red-700 hover:bg-red-50 dark:border-red-900/60 dark:text-red-400 dark:hover:bg-red-950/40',
-  },
-]
 
 type PostEventDraft = {
   operational_status: OperationalStatus
@@ -763,9 +774,1025 @@ function ClientLink({ clientId }: { clientId: string }) {
   )
 }
 
+// =============================================================================
+// Edição direta na página (Proposta, Contato e Evento)
+// =============================================================================
+
+const EXTRA_SERVICES = [
+  { kind: 'ab', label: 'A&B', chip: 'A&B', icon: UtensilsCrossed, rate: NET_RATES.ab },
+  { kind: 'lodging', label: 'Hospedagem', chip: 'Hospedagem', icon: BedDouble, rate: NET_RATES.lodging },
+  { kind: 'equipment', label: 'Equipamentos / Extras', chip: 'Equipamentos', icon: MonitorSpeaker, rate: NET_RATES.equipment },
+  { kind: 'parking', label: 'Estacionamento', chip: 'Estacionamento', icon: Car, rate: NET_RATES.parking },
+] as const
+
+type ExtraKind = (typeof EXTRA_SERVICES)[number]['kind']
+
+const hasKey = (kind: ExtraKind) => `has_${kind}` as const
+const centsKey = (kind: ExtraKind) => `${kind}_cents` as const
+
+/** Salvar/Descartar de um card: aparece quando há alteração (ou um erro para mostrar). */
+function SaveBar({
+  editor,
+  onSave,
+  onDiscard,
+  alwaysVisible = false,
+}: {
+  editor: LeadSectionDraft
+  onSave: () => void
+  onDiscard: () => void
+  alwaysVisible?: boolean
+}) {
+  if (!editor.dirty && !editor.saveError && !alwaysVisible) return null
+  return (
+    <div className="mt-5 flex flex-wrap items-center justify-end gap-3 border-t border-slate-100 pt-4 dark:border-slate-800">
+      {editor.saveError && (
+        <span role="alert" className="mr-auto flex items-center gap-1.5 text-xs font-medium text-red-600 dark:text-red-400">
+          <CircleAlert className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          {editor.saveError}
+        </span>
+      )}
+      <button
+        type="button"
+        onClick={onDiscard}
+        disabled={editor.saving}
+        className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-60 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+      >
+        {editor.dirty ? 'Descartar' : 'Cancelar'}
+      </button>
+      <button
+        type="button"
+        onClick={onSave}
+        disabled={editor.saving || !editor.dirty}
+        className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {editor.saving ? <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}
+        Salvar
+      </button>
+    </div>
+  )
+}
+
+function EditButton({ onClick, label }: { onClick: () => void; label: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs font-semibold text-brand-700 transition-colors hover:bg-brand-50 dark:text-brand-300 dark:hover:bg-brand-900/30"
+    >
+      <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+      Editar
+    </button>
+  )
+}
+
+function ProposalCard({ editor, lossReasonLabels }: { editor: LeadSectionDraft; lossReasonLabels: string[] }) {
+  const { draft, update, change, errors } = editor
+  const isLost = draft.status === 'perdido'
+  const isClosed = draft.status === 'fechado'
+
+  // Foca o valor do serviço recém-adicionado (depois que o campo aparece)
+  const pendingFocusRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!pendingFocusRef.current) return
+    document.getElementById(pendingFocusRef.current)?.focus()
+    pendingFocusRef.current = null
+  }, [draft.has_ab, draft.has_lodging, draft.has_equipment, draft.has_parking])
+
+  const setExtra = (kind: ExtraKind, enabled: boolean) => {
+    change((current) => ({ ...current, [hasKey(kind)]: enabled, [centsKey(kind)]: enabled ? current[centsKey(kind)] : null }))
+    if (enabled) pendingFocusRef.current = `lead-${centsKey(kind)}`
+  }
+
+  const active = EXTRA_SERVICES.filter(({ kind }) => draft[hasKey(kind)])
+  const inactive = EXTRA_SERVICES.filter(({ kind }) => !draft[hasKey(kind)])
+  const totalCents = computeTotalCents(draft)
+  const netCents = computeNetCents(draft)
+  const parts = [
+    { label: 'Locação de sala', icon: MapPin, cents: draft.value_cents ?? 0, rate: NET_RATES.rental, show: draft.value_cents !== null },
+    ...EXTRA_SERVICES.map(({ kind, label, icon, rate }) => ({ label, icon, cents: draft[centsKey(kind)] ?? 0, rate, show: draft[hasKey(kind)] })),
+  ].filter((part) => part.show)
+
+  return (
+    <Card icon={FileText} title="Proposta" actions={editor.dirty ? <span className="text-xs font-semibold text-amber-600 dark:text-amber-400">Alterações não salvas</span> : undefined}>
+      <div id="proposal-card" className="space-y-5">
+        <div className="space-y-5">
+          <div>
+            <p id="lead-status-label" className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+              Situação
+            </p>
+            <div role="radiogroup" aria-labelledby="lead-status-label" className="grid grid-cols-3 gap-2">
+              {STATUS_OPTIONS.map(({ value, title, icon: Icon, selectedClassName, iconClassName }) => {
+                const selected = draft.status === value
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    role="radio"
+                    aria-checked={selected}
+                    onClick={() => change((current) => withStatus(current, value), ['proposal_number', 'loss_reason', 'loss_reason_details'])}
+                    className={cn(
+                      'flex items-center justify-center gap-1.5 rounded-lg border px-2 py-2 text-sm font-semibold transition-colors',
+                      selected
+                        ? cn(selectedClassName, 'text-slate-900 dark:text-white')
+                        : 'border-slate-200 text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800',
+                    )}
+                  >
+                    <Icon className={cn('h-4 w-4', selected ? iconClassName : 'text-slate-400')} aria-hidden="true" />
+                    {title}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <YesNoToggle
+              id="lead-proposal_sent"
+              label="Proposta formal enviada?"
+              stacked
+              value={draft.proposal_sent || isClosed}
+              disabled={isClosed}
+              onChange={(value) => update('proposal_sent', value)}
+            />
+            {needsProposalNumber(draft) && (
+              <Field label="Nº da proposta" htmlFor="lead-proposal_number" required={isClosed} error={errors.proposal_number}>
+                <input
+                  id="lead-proposal_number"
+                  type="text"
+                  maxLength={50}
+                  autoComplete="off"
+                  placeholder="Ex.: 2026-0042"
+                  value={draft.proposal_number}
+                  onChange={(event) => update('proposal_number', event.target.value)}
+                  aria-invalid={Boolean(errors.proposal_number)}
+                  aria-describedby={errors.proposal_number ? 'lead-proposal_number-error' : undefined}
+                  className={inputClassName(Boolean(errors.proposal_number))}
+                />
+              </Field>
+            )}
+          </div>
+
+          {isLost && (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Field label="Motivo da perda" htmlFor="lead-loss_reason" required error={errors.loss_reason}>
+                <select
+                  id="lead-loss_reason"
+                  value={draft.loss_reason}
+                  onChange={(event) => update('loss_reason', event.target.value)}
+                  aria-invalid={Boolean(errors.loss_reason)}
+                  className={inputClassName(Boolean(errors.loss_reason))}
+                >
+                  <option value="">Selecione</option>
+                  {lossReasonLabels.map((label) => (
+                    <option key={label} value={label}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              {needsLossDetails(draft) ? (
+                <Field
+                  label="Detalhes"
+                  htmlFor="lead-loss_reason_details"
+                  required={draft.loss_reason === LOSS_REASON_OTHER}
+                  error={errors.loss_reason_details}
+                >
+                  <input
+                    id="lead-loss_reason_details"
+                    type="text"
+                    maxLength={2000}
+                    autoComplete="off"
+                    placeholder="O que o cliente disse?"
+                    value={draft.loss_reason_details}
+                    onChange={(event) => update('loss_reason_details', event.target.value)}
+                    aria-invalid={Boolean(errors.loss_reason_details)}
+                    className={inputClassName(Boolean(errors.loss_reason_details))}
+                  />
+                </Field>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => update('show_loss_details', true)}
+                  className="self-end justify-self-start rounded-lg px-2 py-2.5 text-sm font-medium text-brand-700 hover:bg-brand-50 dark:text-brand-300 dark:hover:bg-brand-900/30"
+                >
+                  + Adicionar detalhes
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 md:items-start">
+          <div className="min-w-0 space-y-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Valores</p>
+            <Field label="Locação de sala (R$)" htmlFor="lead-value_cents" error={errors.value_cents}>
+              <MoneyInput id="lead-value_cents" cents={draft.value_cents} invalid={Boolean(errors.value_cents)} onChange={(cents) => update('value_cents', cents)} />
+            </Field>
+            {active.map(({ kind, label, icon: Icon }) => (
+              <div key={kind}>
+                <label htmlFor={`lead-${centsKey(kind)}`} className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-slate-700 dark:text-slate-200">
+                  <Icon className="h-4 w-4 text-slate-400" aria-hidden="true" />
+                  {label} (R$)
+                </label>
+                <div className="flex items-center gap-2">
+                  <div className="min-w-0 flex-1">
+                    <MoneyInput id={`lead-${centsKey(kind)}`} cents={draft[centsKey(kind)]} onChange={(cents) => update(centsKey(kind), cents)} />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setExtra(kind, false)}
+                    title={`Remover ${label}`}
+                    aria-label={`Remover ${label}`}
+                    className="rounded-lg p-2.5 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/40 dark:hover:text-red-400"
+                  >
+                    <X className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                </div>
+              </div>
+            ))}
+            {inactive.length > 0 && (
+              <div className="flex flex-wrap gap-2 pt-1">
+                {inactive.map(({ kind, chip }) => (
+                  <button
+                    key={kind}
+                    type="button"
+                    onClick={() => setExtra(kind, true)}
+                    className="inline-flex items-center gap-1 rounded-full border border-dashed border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 transition-colors hover:border-brand-400 hover:bg-brand-50 hover:text-brand-700 dark:border-slate-600 dark:text-slate-300 dark:hover:border-brand-600 dark:hover:bg-brand-900/30 dark:hover:text-brand-200"
+                  >
+                    <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+                    {chip}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="overflow-hidden rounded-lg border border-brand-100 dark:border-brand-900/60" aria-live="polite">
+            <div className="bg-gradient-to-br from-brand-900 to-brand-600 p-4 text-white">
+              <p className="text-xs font-semibold uppercase tracking-wide text-brand-100">Locação de sala</p>
+              <p className="mt-1 text-2xl font-bold tabular-nums">{draft.value_cents !== null ? formatCentsBRL(draft.value_cents) : '—'}</p>
+            </div>
+            <dl className="divide-y divide-slate-100 bg-brand-50/40 px-4 text-sm dark:divide-slate-800 dark:bg-brand-950/20">
+              <div className="flex items-baseline justify-between gap-3 py-2">
+                <dt>
+                  <span className="font-medium text-slate-800 dark:text-slate-100">Receita líquida total</span>
+                  <span className="block text-[11px] text-slate-500 dark:text-slate-400">{NET_RATES_LABEL}</span>
+                </dt>
+                <dd className="font-semibold tabular-nums text-slate-900 dark:text-white">{totalCents > 0 ? formatCentsBRL(netCents) : '—'}</dd>
+              </div>
+              <div className="flex items-baseline justify-between gap-3 py-2">
+                <dt className="font-medium text-slate-800 dark:text-slate-100">Receita bruta total</dt>
+                <dd className="font-semibold tabular-nums text-slate-900 dark:text-white">{totalCents > 0 ? formatCentsBRL(totalCents) : '—'}</dd>
+              </div>
+            </dl>
+            {parts.length > 0 && (
+              <ul className="space-y-1.5 border-t border-slate-100 px-4 py-3 text-sm dark:border-slate-800">
+                {parts.map(({ label, icon: Icon, cents, rate }) => (
+                  <li key={label} className="flex items-start justify-between gap-4 text-slate-600 dark:text-slate-300">
+                    <span className="flex items-center gap-1.5">
+                      <Icon className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" />
+                      {label}
+                    </span>
+                    <span className="text-right tabular-nums">
+                      {formatCentsBRL(cents)}
+                      {rate < 1 && (
+                        <span className="block text-[11px] text-slate-400 dark:text-slate-500">
+                          {Math.round(rate * 100)}%: {formatCentsBRL(Math.round(cents * rate))}
+                        </span>
+                      )}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      </div>
+      <SaveBar editor={editor} onSave={() => void editor.save()} onDiscard={editor.discard} />
+    </Card>
+  )
+}
+
+type CnpjFill = { digits: string; name: string; city: string | null; source: 'cadastro' | 'receita' }
+
+function ContactCard({
+  lead,
+  editing,
+  onEditingChange,
+  originLabels,
+  originsLoading,
+  onSaved,
+}: {
+  lead: Lead
+  editing: boolean
+  onEditingChange: (editing: boolean) => void
+  originLabels: string[]
+  originsLoading: boolean
+  onSaved: (lead: Lead) => void
+}) {
+  const editor = useLeadSectionDraft(lead, 'contact', { hasRooms: false, onSaved })
+  const { draft, update, change, errors } = editor
+  const { options: companyOptions } = useCompanyOptions()
+  const showCeremonialist = isCeremonialistOrigin(draft.origin)
+  const ceremonialists = useCeremonialists(editing && showCeremonialist)
+  const [ceremonialistModal, setCeremonialistModal] = useState(false)
+  const origins = withCurrentValue(originLabels, draft.origin)
+
+  // CNPJ válido com a Empresa vazia: preenche pelo cadastro ou pela Receita Federal (BrasilAPI)
+  const cnpjDigits = onlyDigits(draft.cnpj)
+  const cnpjValid = cnpjDigits.length === 14 && isValidCNPJ(cnpjDigits)
+  const knownCompany = cnpjValid ? companyOptions.find((option) => onlyDigits(option.cnpj ?? '') === cnpjDigits) : undefined
+  const [lookup, setLookup] = useState<{ digits: string; name: string; city: string | null } | null>(null)
+  const needsLookup = editing && cnpjValid && !knownCompany && !draft.company.trim() && cnpjDigits !== onlyDigits(lead.cnpj ?? '')
+  useEffect(() => {
+    if (!needsLookup) return
+    const controller = new AbortController()
+    lookupCnpj(cnpjDigits, controller.signal).then((result) => {
+      if (result) setLookup({ digits: cnpjDigits, name: result.name, city: result.city })
+    })
+    return () => controller.abort()
+  }, [needsLookup, cnpjDigits])
+  const fill: CnpjFill | null = knownCompany
+    ? { digits: cnpjDigits, name: knownCompany.name, city: null, source: 'cadastro' }
+    : lookup && lookup.digits === cnpjDigits
+      ? { ...lookup, source: 'receita' }
+      : null
+  const [appliedFill, setAppliedFill] = useState('')
+  const [filled, setFilled] = useState<CnpjFill | null>(null)
+  const fillKey = fill ? `${fill.digits}|${fill.source}|${fill.name}` : ''
+  if (editing && fillKey && fillKey !== appliedFill) {
+    setAppliedFill(fillKey)
+    if (fill && !draft.company.trim()) {
+      update('company', fill.name)
+      setFilled(fill)
+    }
+  }
+
+  const optOutRevoking = lead.marketing_opt_out && !draft.marketing_opt_out
+  const close = () => {
+    editor.discard()
+    onEditingChange(false)
+  }
+  const save = async () => {
+    if (await editor.save()) onEditingChange(false)
+  }
+
+  if (!editing) {
+    return (
+      <Card icon={Phone} title="Contato" actions={<EditButton onClick={() => onEditingChange(true)} label="Editar contato" />}>
+        <dl className="space-y-3">
+          <InfoRow label="Telefone / WhatsApp">{lead.contact_phone || empty}</InfoRow>
+          <InfoRow label="E-mail">
+            {lead.contact_email && isValidEmail(lead.contact_email) ? (
+              <a href={`mailto:${lead.contact_email.trim()}`} className="inline-flex items-center gap-1 text-brand-700 hover:underline dark:text-brand-300">
+                <Mail className="h-3.5 w-3.5" aria-hidden="true" />
+                {lead.contact_email}
+              </a>
+            ) : (
+              lead.contact_email || empty
+            )}
+          </InfoRow>
+          <InfoRow label="Empresa">{lead.company ? `${lead.company}${lead.cnpj ? ` · CNPJ ${lead.cnpj}` : ''}` : 'Pessoa física'}</InfoRow>
+          <InfoRow label="Meio de prospecção">{lead.origin || empty}</InfoRow>
+          {lead.marketing_opt_out && (
+            <p className="flex items-center gap-1.5 rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+              <ShieldOff className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              Opt-out LGPD: não enviar comunicações de marketing.
+            </p>
+          )}
+        </dl>
+      </Card>
+    )
+  }
+
+  return (
+    <Card icon={Phone} title="Contato" actions={<span className="text-xs font-semibold text-brand-700 dark:text-brand-300">Editando</span>}>
+      <div className="space-y-4">
+        <Field label="Nome do contato" htmlFor="lead-contact_name" required error={errors.contact_name}>
+          <input
+            id="lead-contact_name"
+            type="text"
+            maxLength={150}
+            autoComplete="off"
+            value={draft.contact_name}
+            onChange={(event) => update('contact_name', event.target.value)}
+            aria-invalid={Boolean(errors.contact_name)}
+            className={inputClassName(Boolean(errors.contact_name))}
+          />
+        </Field>
+        <Field label="Telefone / WhatsApp" htmlFor="lead-contact_phone" error={errors.contact_phone}>
+          <input
+            id="lead-contact_phone"
+            type="tel"
+            inputMode="numeric"
+            autoComplete="off"
+            placeholder="Ex.: (51) 99999-8888"
+            value={draft.contact_phone}
+            onChange={(event) => update('contact_phone', formatPhoneBR(event.target.value))}
+            aria-invalid={Boolean(errors.contact_phone)}
+            className={inputClassName(Boolean(errors.contact_phone))}
+          />
+        </Field>
+        <Field label="E-mail" htmlFor="lead-contact_email" error={errors.contact_email}>
+          <input
+            id="lead-contact_email"
+            type="email"
+            maxLength={254}
+            autoComplete="off"
+            value={draft.contact_email}
+            onChange={(event) => update('contact_email', event.target.value)}
+            aria-invalid={Boolean(errors.contact_email)}
+            className={inputClassName(Boolean(errors.contact_email))}
+          />
+        </Field>
+        <Field
+          label="CNPJ"
+          htmlFor="lead-cnpj"
+          error={errors.cnpj ?? (cnpjDigits.length === 14 && !cnpjValid ? 'CNPJ inválido. Confira os dígitos.' : undefined)}
+        >
+          <input
+            id="lead-cnpj"
+            type="text"
+            inputMode="numeric"
+            autoComplete="off"
+            placeholder="00.000.000/0000-00"
+            value={draft.cnpj}
+            onChange={(event) => update('cnpj', formatCNPJ(event.target.value))}
+            aria-invalid={Boolean(errors.cnpj)}
+            className={inputClassName(Boolean(errors.cnpj) || (cnpjDigits.length === 14 && !cnpjValid))}
+          />
+        </Field>
+        <Field label="Empresa" htmlFor="lead-company" hint={filled && draft.company === filled.name ? undefined : 'Em branco: pessoa física.'}>
+          <CompanyAutocomplete
+            id="lead-company"
+            maxLength={120}
+            placeholder="Ex.: Empresa / Organização"
+            value={draft.company}
+            options={companyOptions}
+            onChange={(value) => update('company', value)}
+            onSelect={(option) =>
+              change(
+                (current) => ({
+                  ...current,
+                  company: option.name,
+                  cnpj: option.cnpj ? formatCNPJ(option.cnpj) : onlyDigits(current.cnpj) ? current.cnpj : '',
+                }),
+                ['cnpj'],
+              )
+            }
+            className={inputClassName(false)}
+          />
+          {filled && draft.company === filled.name && (
+            <p className="mt-1.5 flex items-center gap-1 text-xs text-emerald-700 dark:text-emerald-400">
+              <BadgeCheck className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              {filled.source === 'receita'
+                ? `Preenchido via CNPJ (Receita Federal)${filled.city ? ` · ${filled.city}` : ''}`
+                : 'Preenchido pelo cadastro deste CNPJ'}
+            </p>
+          )}
+        </Field>
+        <Field label="Meio de prospecção" htmlFor="lead-origin">
+          <select
+            id="lead-origin"
+            value={draft.origin}
+            disabled={originsLoading}
+            onChange={(event) => update('origin', event.target.value)}
+            className={inputClassName(false)}
+          >
+            <option value="">{originsLoading ? 'Carregando...' : 'Selecione'}</option>
+            {origins.map((label) => (
+              <option key={label} value={label}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </Field>
+        {showCeremonialist && (
+          <Field
+            label="Cerimonialista"
+            htmlFor="lead-ceremonialist_id"
+            hint={ceremonialists.error ? 'Não foi possível carregar as cerimonialistas (rode a migração 016).' : 'Quem indicou esta proposta.'}
+          >
+            <select
+              id="lead-ceremonialist_id"
+              value={draft.ceremonialist_id}
+              onChange={(event) => {
+                if (event.target.value === NEW_CEREMONIALIST) setCeremonialistModal(true)
+                else update('ceremonialist_id', event.target.value)
+              }}
+              disabled={ceremonialists.loading && ceremonialists.items.length === 0}
+              className={inputClassName(false)}
+            >
+              <option value="">{ceremonialists.loading && ceremonialists.items.length === 0 ? 'Carregando...' : 'Selecione a cerimonialista'}</option>
+              {ceremonialists.items.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
+                </option>
+              ))}
+              {draft.ceremonialist_id && !ceremonialists.items.some((item) => item.id === draft.ceremonialist_id) && (
+                <option value={draft.ceremonialist_id}>Cerimonialista cadastrada</option>
+              )}
+              <option value={NEW_CEREMONIALIST}>+ Nova cerimonialista</option>
+            </select>
+          </Field>
+        )}
+        <div>
+          <label className="flex w-fit cursor-pointer items-start gap-2.5 text-sm text-slate-600 dark:text-slate-300">
+            <input
+              type="checkbox"
+              checked={draft.marketing_opt_out}
+              onChange={(event) => update('marketing_opt_out', event.target.checked)}
+              className="mt-0.5 h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-600 dark:border-slate-600 dark:bg-slate-900"
+            />
+            <span>
+              Cliente solicitou não receber comunicações/mailing{' '}
+              <span className="text-xs font-medium text-slate-400 dark:text-slate-500">(Opt-out LGPD)</span>
+            </span>
+          </label>
+          {draft.marketing_opt_out && !lead.marketing_opt_out && (
+            <p className="mt-1 pl-[1.625rem] text-xs text-slate-500 dark:text-slate-400">
+              Vale para todas as propostas com o mesmo e-mail ou telefone, inclusive as futuras.
+            </p>
+          )}
+          {optOutRevoking && (
+            <p role="alert" className="mt-1.5 pl-[1.625rem] text-xs font-medium text-amber-700 dark:text-amber-400">
+              Ao salvar, o opt-out deixa de valer para as propostas com o mesmo e-mail ou telefone desta. Faça isso apenas se o
+              cliente deu novo consentimento.
+            </p>
+          )}
+        </div>
+      </div>
+      {ceremonialistModal &&
+        createPortal(
+          <CeremonialistFormModal
+            onClose={() => setCeremonialistModal(false)}
+            onCreated={(created) => {
+              ceremonialists.add(created)
+              ceremonialists.reload()
+              update('ceremonialist_id', created.id)
+              setCeremonialistModal(false)
+            }}
+          />,
+          document.body,
+        )}
+      <SaveBar editor={editor} onSave={() => void save()} onDiscard={close} alwaysVisible />
+    </Card>
+  )
+}
+
+type DateMode = 'single' | 'multi' | 'none'
+
+function EventCard({
+  lead,
+  editing,
+  onEditingChange,
+  roomLabels,
+  roomsLoading,
+  onSaved,
+}: {
+  lead: Lead
+  editing: boolean
+  onEditingChange: (editing: boolean) => void
+  roomLabels: string[]
+  roomsLoading: boolean
+  onSaved: (lead: Lead) => void
+}) {
+  const editor = useLeadSectionDraft(lead, 'event', { hasRooms: roomLabels.length > 0, onSaved })
+  const { draft, update, change, errors } = editor
+  const rooms = getLeadRooms(lead)
+  const period = formatLeadEventPeriod(lead)
+  const dateMode: DateMode = draft.no_date ? 'none' : draft.multi_day ? 'multi' : 'single'
+  const eventDays = draft.multi_day && !draft.no_date ? countEventDays({ event_date: draft.event_date || null, event_end_date: draft.event_end_date || null }) : null
+  // Salas ativas + salas já marcadas que tenham sido desativadas depois
+  const roomOptions = [...draft.room_interests.filter((room) => !roomLabels.includes(room)), ...roomLabels]
+
+  const setDateMode = (mode: DateMode) =>
+    change(
+      (current) => ({
+        ...current,
+        no_date: mode === 'none',
+        multi_day: mode === 'multi',
+        event_end_date: mode === 'multi' ? current.event_end_date : '',
+      }),
+      ['event_date', 'event_end_date'],
+    )
+  const toggleRoom = (room: string) =>
+    change(
+      (current) => ({
+        ...current,
+        room_interests: current.room_interests.includes(room)
+          ? current.room_interests.filter((item) => item !== room)
+          : [...current.room_interests, room],
+      }),
+      ['room_interests'],
+    )
+  const close = () => {
+    editor.discard()
+    onEditingChange(false)
+  }
+  const save = async () => {
+    if (await editor.save()) onEditingChange(false)
+  }
+
+  if (!editing) {
+    return (
+      <Card icon={CalendarDays} title="Evento" actions={<EditButton onClick={() => onEditingChange(true)} label="Editar evento" />}>
+        <dl className="space-y-3">
+          {lead.event_name && <InfoRow label="Nome do evento">{lead.event_name}</InfoRow>}
+          <InfoRow label="Data">{period ?? (lead.date_notes ? `Sem data definida (${lead.date_notes})` : 'Sem data definida')}</InfoRow>
+          <InfoRow label="PAX">{lead.pax !== null ? `${lead.pax.toLocaleString('pt-BR')} pessoas` : empty}</InfoRow>
+          <InfoRow label="Salas/Salões de interesse">
+            {rooms.length > 0 ? (
+              <span className="mt-1 flex flex-wrap gap-1">
+                {rooms.map((room) => (
+                  <span key={room} className="rounded-md bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                    {room}
+                  </span>
+                ))}
+              </span>
+            ) : (
+              empty
+            )}
+          </InfoRow>
+        </dl>
+      </Card>
+    )
+  }
+
+  return (
+    <Card icon={CalendarDays} title="Evento" actions={<span className="text-xs font-semibold text-brand-700 dark:text-brand-300">Editando</span>}>
+      <div className="space-y-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-[minmax(0,1fr)_7rem]">
+          <Field label="Nome do evento" htmlFor="lead-event_name">
+            <input
+              id="lead-event_name"
+              type="text"
+              maxLength={200}
+              autoComplete="off"
+              value={draft.event_name}
+              onChange={(event) => update('event_name', event.target.value)}
+              className={inputClassName(false)}
+            />
+          </Field>
+          <Field label="PAX" htmlFor="lead-pax">
+            <input
+              id="lead-pax"
+              type="text"
+              inputMode="numeric"
+              autoComplete="off"
+              maxLength={6}
+              value={draft.pax}
+              onChange={(event) => update('pax', onlyDigits(event.target.value).slice(0, 6))}
+              className={cn(inputClassName(false), 'tabular-nums')}
+            />
+          </Field>
+        </div>
+
+        <div>
+          <p id="lead-date-mode-label" className="mb-1.5 text-sm font-medium text-slate-700 dark:text-slate-200">
+            Data
+          </p>
+          <div role="radiogroup" aria-labelledby="lead-date-mode-label" className="grid grid-cols-3 gap-1 rounded-lg border border-slate-200 bg-slate-100 p-1 dark:border-slate-700 dark:bg-slate-800">
+            {(
+              [
+                ['single', 'Um dia'],
+                ['multi', 'Mais de um dia'],
+                ['none', 'Sem data'],
+              ] as const
+            ).map(([mode, text]) => (
+              <button
+                key={mode}
+                type="button"
+                role="radio"
+                aria-checked={dateMode === mode}
+                onClick={() => setDateMode(mode)}
+                className={cn(
+                  'rounded-md px-2 py-1.5 text-xs font-semibold transition-colors',
+                  dateMode === mode
+                    ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-600 dark:text-white'
+                    : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200',
+                )}
+              >
+                {text}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {dateMode === 'none' ? (
+          <Field label="Previsão / mês de interesse" htmlFor="lead-date_notes">
+            <input
+              id="lead-date_notes"
+              type="text"
+              maxLength={80}
+              placeholder="Ex.: Mês/Ano previsto"
+              value={draft.date_notes}
+              onChange={(event) => update('date_notes', event.target.value)}
+              className={inputClassName(false)}
+            />
+          </Field>
+        ) : (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Field label={dateMode === 'multi' ? 'Data inicial' : 'Data do evento'} htmlFor="lead-event_date" error={errors.event_date}>
+              <input
+                id="lead-event_date"
+                type="date"
+                value={draft.event_date}
+                onChange={(event) => update('event_date', event.target.value)}
+                aria-invalid={Boolean(errors.event_date)}
+                className={inputClassName(Boolean(errors.event_date))}
+              />
+            </Field>
+            {dateMode === 'multi' && (
+              <Field
+                label="Data final"
+                htmlFor="lead-event_end_date"
+                error={errors.event_end_date}
+                hint={eventDays && eventDays > 1 ? `${eventDays} dias de evento` : undefined}
+              >
+                <input
+                  id="lead-event_end_date"
+                  type="date"
+                  value={draft.event_end_date}
+                  min={draft.event_date || undefined}
+                  onChange={(event) => update('event_end_date', event.target.value)}
+                  aria-invalid={Boolean(errors.event_end_date)}
+                  className={inputClassName(Boolean(errors.event_end_date))}
+                />
+              </Field>
+            )}
+          </div>
+        )}
+
+        <div id="lead-room_interests" tabIndex={-1} role="group" aria-labelledby="lead-rooms-label" className="rounded-lg focus:outline-none">
+          <p id="lead-rooms-label" className="mb-1.5 text-sm font-medium text-slate-700 dark:text-slate-200">
+            Salas/Salões de interesse
+          </p>
+          {roomsLoading ? (
+            <div className="h-9 w-48 animate-pulse rounded-full bg-slate-100 dark:bg-slate-800" />
+          ) : roomOptions.length === 0 ? (
+            <p className="text-xs text-slate-500 dark:text-slate-400">Nenhuma sala cadastrada. Configure no Painel Admin.</p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {roomOptions.map((room) => {
+                const checked = draft.room_interests.includes(room)
+                return (
+                  <button
+                    key={room}
+                    type="button"
+                    role="checkbox"
+                    aria-checked={checked}
+                    onClick={() => toggleRoom(room)}
+                    className={cn(
+                      'inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors',
+                      checked
+                        ? 'border-brand-600 bg-brand-600 text-white shadow-sm'
+                        : 'border-slate-200 bg-white text-slate-700 hover:border-brand-300 hover:bg-brand-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:hover:border-brand-700 dark:hover:bg-brand-900/30',
+                    )}
+                  >
+                    {checked && <Check className="h-3.5 w-3.5" strokeWidth={3} aria-hidden="true" />}
+                    {room}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+          {errors.room_interests && <p className="mt-1.5 text-xs font-medium text-red-600 dark:text-red-400">{errors.room_interests}</p>}
+        </div>
+      </div>
+      <SaveBar editor={editor} onSave={() => void save()} onDiscard={close} alwaysVisible />
+    </Card>
+  )
+}
+
+// =============================================================================
+// Página
+// =============================================================================
+
+const QUICK_ACTIONS: Array<{ status: 'fechado' | 'perdido'; label: string; icon: LucideIcon; className: string }> = [
+  {
+    status: 'fechado',
+    label: 'Fechou',
+    icon: CircleCheck,
+    className: 'border-emerald-200 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-900/60 dark:text-emerald-400 dark:hover:bg-emerald-950/40',
+  },
+  {
+    status: 'perdido',
+    label: 'Perdeu',
+    icon: CircleX,
+    className: 'border-red-200 text-red-700 hover:bg-red-50 dark:border-red-900/60 dark:text-red-400 dark:hover:bg-red-950/40',
+  },
+]
+
+/** Leva até o campo que confirma o Fechou (nº da proposta) ou o Perdeu (motivo). */
+function focusStatusField(status: 'fechado' | 'perdido') {
+  // Espera o campo aparecer no card
+  window.requestAnimationFrame(() =>
+    window.requestAnimationFrame(() => {
+      const element = document.getElementById(status === 'fechado' ? 'lead-proposal_number' : 'lead-loss_reason')
+      element?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      element?.focus({ preventScroll: true })
+    }),
+  )
+}
+
+function LeadDetailsContent({ lead, loading, onLeadChange }: { lead: Lead; loading: boolean; onLeadChange: (lead: Lead) => void }) {
+  const { showToast } = useOutletContext<LayoutOutletContext>()
+  const { isAdmin } = useAuth()
+  const confirm = useConfirm()
+  const navigate = useNavigate()
+  const location = useLocation()
+  // Vindo das listas: "Editar" abre os cards em edição; Fechou/Perdeu chegam marcados no card Proposta
+  const [intent] = useState(() => (location.state ?? null) as ProposalPageState | null)
+  const { options, loading: optionsLoading } = useSettingsOptions()
+
+  const handleSaved = (updated: Lead) => {
+    onLeadChange(updated)
+    showToast(`Proposta de "${updated.contact_name}" atualizada.`)
+  }
+
+  const roomLabels = useMemo(() => options.room.map((option) => option.label), [options.room])
+  const proposal = useLeadSectionDraft(lead, 'proposal', { hasRooms: roomLabels.length > 0, initialStatus: intent?.status, onSaved: handleSaved })
+  const [editContact, setEditContact] = useState(Boolean(intent?.edit))
+  const [editEvent, setEditEvent] = useState(Boolean(intent?.edit))
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+
+  // O pedido da lista vale uma vez: recarregar a página não repete
+  useEffect(() => {
+    if (location.state) navigate(`${location.pathname}${location.search}`, { replace: true, state: null })
+  }, [location.state, location.pathname, location.search, navigate])
+  useEffect(() => {
+    if (intent?.status) focusStatusField(intent.status)
+  }, [intent])
+
+  const lossReasonLabels = useMemo(() => {
+    // Motivos do Painel Admin; sem nenhum, os padrão. "Outros" sempre por último
+    const fromDb = options.loss_reason.map((option) => option.label)
+    const base = fromDb.length > 0 ? fromDb : [...DEFAULT_LOSS_REASONS]
+    const sorted = [...base.filter((label) => label !== LOSS_REASON_OTHER), ...base.filter((label) => label === LOSS_REASON_OTHER)]
+    return withCurrentValue(sorted, proposal.draft.loss_reason)
+  }, [options.loss_reason, proposal.draft.loss_reason])
+
+  const quickStatus = (status: 'fechado' | 'perdido') => {
+    proposal.change((current) => withStatus(current, status), ['proposal_number', 'loss_reason', 'loss_reason_details'])
+    focusStatusField(status)
+  }
+
+  const startEditing = () => {
+    setEditContact(true)
+    setEditEvent(true)
+    window.requestAnimationFrame(() => document.getElementById('lead-contact_name')?.focus())
+  }
+
+  const handleDelete = async () => {
+    if (deleting) return
+    const confirmed = await confirm({
+      title: `Excluir a proposta de "${lead.contact_name}"?`,
+      description: 'Essa ação é permanente e remove todos os dados deste orçamento, inclusive os anexos.',
+      confirmLabel: 'Excluir proposta',
+      tone: 'danger',
+    })
+    if (!confirmed) return
+    setDeleting(true)
+    setDeleteError(null)
+    // .select() devolve as linhas apagadas: lista vazia = nada foi excluído (sem permissão ou já excluída)
+    const { data, error } = await supabase.from('leads').delete().eq('id', lead.id).select('id')
+    if (error || !data || data.length === 0) {
+      setDeleting(false)
+      setDeleteError(
+        error?.message.toLowerCase().includes('failed to fetch')
+          ? 'Sem conexão com o servidor. A proposta não foi excluída.'
+          : 'Esta proposta não foi excluída: ela já não existe ou apenas o ADMIN pode excluir propostas.',
+      )
+      return
+    }
+    // Os arquivos anexados saem do bucket junto com a proposta
+    await removeLeadFolders([lead.id])
+    showToast(`Proposta de "${lead.contact_name}" excluída.`)
+    navigate(lead.client_id ? `/leads/${lead.client_id}` : '/propostas', { replace: true })
+  }
+
+  return (
+    <div className="space-y-6">
+      <BackLink />
+
+      {/* Cabeçalho */}
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-3">
+            <h1 className="truncate text-2xl font-bold tracking-tight text-slate-900 dark:text-white">{lead.contact_name}</h1>
+            <StatusBadge status={lead.status} />
+            {loading && <LoaderCircle className="h-4 w-4 animate-spin text-slate-400" aria-label="Atualizando" />}
+          </div>
+          {lead.company && (
+            <p className="mt-1 flex items-center gap-1.5 text-sm font-medium text-slate-600 dark:text-slate-300">
+              <Building2 className="h-4 w-4 text-slate-400" aria-hidden="true" />
+              {lead.company}
+              {lead.cnpj && <span className="font-normal tabular-nums text-slate-500 dark:text-slate-400">· CNPJ {lead.cnpj}</span>}
+            </p>
+          )}
+          {lead.client_id && <ClientLink clientId={lead.client_id} />}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <WhatsAppButton lead={lead} />
+          {lead.status === 'em_aberto' &&
+            QUICK_ACTIONS.map(({ status, label, icon: Icon, className }) => (
+              <button
+                key={status}
+                type="button"
+                onClick={() => quickStatus(status)}
+                title={`${label}: marcar como ${status === 'fechado' ? 'Fechado' : 'Perdido'} no card Proposta`}
+                className={cn('inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-semibold transition-colors', className)}
+              >
+                <Icon className="h-4 w-4" aria-hidden="true" />
+                {label}
+              </button>
+            ))}
+          {!(editContact && editEvent) && (
+            <button
+              type="button"
+              onClick={startEditing}
+              className="inline-flex items-center gap-2 rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-brand-700"
+            >
+              <Pencil className="h-4 w-4" aria-hidden="true" />
+              Editar dados
+            </button>
+          )}
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={() => void handleDelete()}
+              disabled={deleting}
+              className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-red-600 transition-colors hover:bg-red-50 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-60 dark:text-red-400 dark:hover:bg-red-950/40 dark:hover:text-red-300"
+            >
+              {deleting ? <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Trash2 className="h-4 w-4" aria-hidden="true" />}
+              {deleting ? 'Excluindo...' : 'Excluir proposta'}
+            </button>
+          )}
+        </div>
+      </div>
+      {deleteError && <ErrorBanner message={deleteError} />}
+
+      <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-3">
+        <div className="space-y-6 xl:col-span-2">
+          <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-2">
+            <ContactCard
+              lead={lead}
+              editing={editContact}
+              onEditingChange={setEditContact}
+              originLabels={options.origin.map((option) => option.label)}
+              originsLoading={optionsLoading}
+              onSaved={handleSaved}
+            />
+            <EventCard
+              lead={lead}
+              editing={editEvent}
+              onEditingChange={setEditEvent}
+              roomLabels={roomLabels}
+              roomsLoading={optionsLoading}
+              onSaved={handleSaved}
+            />
+          </div>
+
+          <ProposalCard editor={proposal} lossReasonLabels={lossReasonLabels} />
+
+          <PostEventCard key={`post-${lead.id}`} lead={lead} onSaved={onLeadChange} />
+
+          <ObservationsCard key={lead.id} lead={lead} onSaved={onLeadChange} />
+        </div>
+
+        <div className="space-y-6">
+          <AttachmentsCard leadId={lead.id} />
+
+          <Card icon={History} title="Histórico">
+            <dl className="space-y-3">
+              <InfoRow label="Cadastrado em">{formatDateTime(lead.created_at)}</InfoRow>
+              <InfoRow label="Última atualização">{formatDateTime(lead.updated_at)}</InfoRow>
+            </dl>
+          </Card>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function BackLink() {
+  return (
+    <Link
+      to="/propostas"
+      className="inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 transition-colors hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
+    >
+      <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+      Consultar Propostas
+    </Link>
+  )
+}
+
 export default function LeadDetails() {
   const { proposalId: leadId = '' } = useParams()
-  const { openEditLead, leadsVersion } = useOutletContext<LayoutOutletContext>()
+  const { leadsVersion } = useOutletContext<LayoutOutletContext>()
   const [retryCount, setRetryCount] = useState(0)
 
   const key = `${leadId}|${leadsVersion}|${retryCount}`
@@ -801,22 +1828,12 @@ export default function LeadDetails() {
   const lead = result?.data && result.data.id === leadId ? result.data : null
   const error = !loading ? result?.error ?? null : null
 
-  const handleObservationsSaved = (updated: Lead) => setResult((current) => (current ? { ...current, data: updated } : current))
-
-  const backLink = (
-    <Link
-      to="/propostas"
-      className="inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 transition-colors hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
-    >
-      <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-      Consultar Propostas
-    </Link>
-  )
+  const handleLeadChange = useCallback((updated: Lead) => setResult((current) => (current ? { ...current, data: updated } : current)), [])
 
   if (!lead) {
     return (
       <div className="space-y-6">
-        {backLink}
+        <BackLink />
         {loading ? (
           <div className="space-y-4">
             <div className="h-10 w-72 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-800" />
@@ -834,186 +1851,5 @@ export default function LeadDetails() {
     )
   }
 
-  const values = getLeadValues(lead)
-  const rooms = getLeadRooms(lead)
-  const period = formatLeadEventPeriod(lead)
-  const proposalSent = lead.proposal_sent || lead.status === 'fechado'
-  const valueParts = [
-    { label: 'Locação de sala', icon: MapPin, value: values.rental, rate: NET_RATES.rental, show: lead.proposed_value !== null },
-    { label: 'Hospedagem', icon: BedDouble, value: values.lodging, rate: NET_RATES.lodging, show: lead.has_lodging || values.lodging > 0 },
-    { label: 'Estacionamento', icon: Car, value: values.parking, rate: NET_RATES.parking, show: lead.has_parking || values.parking > 0 },
-    { label: 'Equipamentos / Extras', icon: MonitorSpeaker, value: values.equipment, rate: NET_RATES.equipment, show: lead.has_equipment || values.equipment > 0 },
-    { label: 'A&B', icon: UtensilsCrossed, value: values.ab, rate: NET_RATES.ab, show: lead.has_ab || values.ab > 0 },
-  ].filter((part) => part.show)
-
-  return (
-    <div className="space-y-6">
-      {backLink}
-
-      {/* Cabeçalho */}
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-3">
-            <h1 className="truncate text-2xl font-bold tracking-tight text-slate-900 dark:text-white">{lead.contact_name}</h1>
-            <StatusBadge status={lead.status} />
-            {loading && <LoaderCircle className="h-4 w-4 animate-spin text-slate-400" aria-label="Atualizando" />}
-          </div>
-          {lead.company && (
-            <p className="mt-1 flex items-center gap-1.5 text-sm font-medium text-slate-600 dark:text-slate-300">
-              <Building2 className="h-4 w-4 text-slate-400" aria-hidden="true" />
-              {lead.company}
-              {lead.cnpj && <span className="font-normal tabular-nums text-slate-500 dark:text-slate-400">· CNPJ {lead.cnpj}</span>}
-            </p>
-          )}
-          {lead.client_id && <ClientLink clientId={lead.client_id} />}
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <WhatsAppButton lead={lead} />
-          {lead.status === 'em_aberto' &&
-            QUICK_ACTIONS.map(({ status, label, icon: Icon, className }) => (
-              <button
-                key={status}
-                type="button"
-                onClick={() => openEditLead({ ...lead, status, proposal_sent: status === 'fechado' ? true : lead.proposal_sent })}
-                title={`${label}: marcar como ${status === 'fechado' ? 'Fechado' : 'Perdido'}`}
-                className={cn('inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-semibold transition-colors', className)}
-              >
-                <Icon className="h-4 w-4" aria-hidden="true" />
-                {label}
-              </button>
-            ))}
-          <button
-            type="button"
-            onClick={() => openEditLead(lead)}
-            className="inline-flex items-center gap-2 rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-brand-700"
-          >
-            <Pencil className="h-4 w-4" aria-hidden="true" />
-            Editar dados
-          </button>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-3">
-        <div className="space-y-6 xl:col-span-2">
-          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-            <Card icon={Phone} title="Contato">
-              <dl className="space-y-3">
-                <InfoRow label="Telefone / WhatsApp">{lead.contact_phone || empty}</InfoRow>
-                <InfoRow label="E-mail">
-                  {lead.contact_email && isValidEmail(lead.contact_email) ? (
-                    <a href={`mailto:${lead.contact_email.trim()}`} className="inline-flex items-center gap-1 text-brand-700 hover:underline dark:text-brand-300">
-                      <Mail className="h-3.5 w-3.5" aria-hidden="true" />
-                      {lead.contact_email}
-                    </a>
-                  ) : (
-                    lead.contact_email || empty
-                  )}
-                </InfoRow>
-                <InfoRow label="Empresa">{lead.company || 'Pessoa física'}</InfoRow>
-                <InfoRow label="Meio de prospecção">{lead.origin || empty}</InfoRow>
-                {lead.marketing_opt_out && (
-                  <p className="flex items-center gap-1.5 rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
-                    <ShieldOff className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                    Opt-out LGPD: não enviar comunicações de marketing.
-                  </p>
-                )}
-              </dl>
-            </Card>
-
-            <Card icon={CalendarDays} title="Evento">
-              <dl className="space-y-3">
-                {lead.event_name && <InfoRow label="Nome do evento">{lead.event_name}</InfoRow>}
-                <InfoRow label="Data">{period ?? (lead.date_notes ? `Sem data definida (${lead.date_notes})` : 'Sem data definida')}</InfoRow>
-                {lead.is_date_flexible && <InfoRow label="Flexibilidade">Data flexível</InfoRow>}
-                <InfoRow label="PAX">{lead.pax !== null ? `${lead.pax.toLocaleString('pt-BR')} pessoas` : empty}</InfoRow>
-                <InfoRow label="Salas/Salões de interesse">
-                  {rooms.length > 0 ? (
-                    <span className="mt-1 flex flex-wrap gap-1">
-                      {rooms.map((room) => (
-                        <span key={room} className="rounded-md bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-200">
-                          {room}
-                        </span>
-                      ))}
-                    </span>
-                  ) : (
-                    empty
-                  )}
-                </InfoRow>
-              </dl>
-            </Card>
-          </div>
-
-          <Card icon={FileText} title="Proposta">
-            <div className="grid grid-cols-1 gap-5 md:grid-cols-[1fr_auto] md:items-start">
-              <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <InfoRow label="Situação da proposta">{proposalSent ? 'Enviada' : 'Sondagem (orçamento verbal)'}</InfoRow>
-                <InfoRow label="Nº da proposta">{lead.proposal_number || empty}</InfoRow>
-                {lead.status === 'perdido' && (
-                  <div className="sm:col-span-2">
-                    <InfoRow label="Motivo da perda">
-                      {[lead.loss_reason, lead.loss_reason_details].filter(Boolean).join(': ') || empty}
-                    </InfoRow>
-                  </div>
-                )}
-              </dl>
-              <div className="overflow-hidden rounded-lg border border-brand-100 md:min-w-[19rem] dark:border-brand-900/60">
-                <div className="bg-gradient-to-br from-brand-900 to-brand-600 p-4 text-white">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-brand-100">Locação de sala</p>
-                  <p className="mt-1 text-2xl font-bold tabular-nums">{lead.proposed_value !== null ? formatBRL(values.rental) : '—'}</p>
-                </div>
-                <dl className="divide-y divide-slate-100 bg-brand-50/40 px-4 text-sm dark:divide-slate-800 dark:bg-brand-950/20">
-                  <div className="flex items-baseline justify-between gap-3 py-2">
-                    <dt>
-                      <span className="font-medium text-slate-800 dark:text-slate-100">Receita líquida total</span>
-                      <span className="block text-[11px] text-slate-500 dark:text-slate-400">{NET_RATES_LABEL}</span>
-                    </dt>
-                    <dd className="font-semibold tabular-nums text-slate-900 dark:text-white">{hasAnyValue(lead) ? formatBRL(values.net) : '—'}</dd>
-                  </div>
-                  <div className="flex items-baseline justify-between gap-3 py-2">
-                    <dt className="font-medium text-slate-800 dark:text-slate-100">Receita bruta total</dt>
-                    <dd className="font-semibold tabular-nums text-slate-900 dark:text-white">{hasAnyValue(lead) ? formatBRL(values.total) : '—'}</dd>
-                  </div>
-                </dl>
-                {valueParts.length > 0 && (
-                  <ul className="space-y-1.5 border-t border-slate-100 px-4 py-3 text-sm dark:border-slate-800">
-                    {valueParts.map(({ label, icon: Icon, value, rate }) => (
-                      <li key={label} className="flex items-start justify-between gap-4 text-slate-600 dark:text-slate-300">
-                        <span className="flex items-center gap-1.5">
-                          <Icon className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" />
-                          {label}
-                        </span>
-                        <span className="text-right tabular-nums">
-                          {formatBRL(value)}
-                          {rate < 1 && (
-                            <span className="block text-[11px] text-slate-400 dark:text-slate-500">
-                              {Math.round(rate * 100)}%: {formatBRL(Math.round(value * rate * 100) / 100)}
-                            </span>
-                          )}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            </div>
-          </Card>
-
-          <PostEventCard key={`post-${lead.id}`} lead={lead} onSaved={handleObservationsSaved} />
-
-          <ObservationsCard key={lead.id} lead={lead} onSaved={handleObservationsSaved} />
-        </div>
-
-        <div className="space-y-6">
-          <AttachmentsCard leadId={lead.id} />
-
-          <Card icon={History} title="Histórico">
-            <dl className="space-y-3">
-              <InfoRow label="Cadastrado em">{formatDateTime(lead.created_at)}</InfoRow>
-              <InfoRow label="Última atualização">{formatDateTime(lead.updated_at)}</InfoRow>
-            </dl>
-          </Card>
-        </div>
-      </div>
-    </div>
-  )
+  return <LeadDetailsContent key={lead.id} lead={lead} loading={loading} onLeadChange={handleLeadChange} />
 }

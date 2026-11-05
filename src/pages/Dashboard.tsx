@@ -34,6 +34,7 @@ import {
 import PageHeader from '../components/PageHeader'
 import WhatsAppButton from '../components/WhatsAppButton'
 import type { LayoutOutletContext } from '../components/Layout'
+import type { ProposalPageState } from '../lib/leadForm'
 import { useTheme } from '../contexts/ThemeContext'
 import { CHART_THEMES, type ChartTheme } from '../lib/chartTheme'
 import { supabase } from '../lib/supabase'
@@ -1203,7 +1204,8 @@ const dateInputClassName =
   'rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-900 shadow-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20 dark:border-slate-700 dark:bg-slate-900 dark:text-white'
 
 export default function Dashboard() {
-  const { openNewLead, openEditLead, leadsVersion } = useOutletContext<LayoutOutletContext>()
+  const { openNewLead, leadsVersion } = useOutletContext<LayoutOutletContext>()
+  const navigate = useNavigate()
   const { isDark } = useTheme()
   const chartTheme = CHART_THEMES[isDark ? 'dark' : 'light']
 
@@ -1294,8 +1296,10 @@ export default function Dashboard() {
     return [...foldIntoOthers(informed, MAX_DONUT_SLICES - notInformed.length), ...notInformed]
   }, [leads, distribution])
 
+  // A edição fica na página da proposta; Fechou/Perdeu já chegam marcados no card Proposta
   const handleQuickEdit = (lead: Lead, status?: LeadStatus) => {
-    openEditLead(status ? { ...lead, status, proposal_sent: status === 'fechado' ? true : lead.proposal_sent } : lead)
+    const state: ProposalPageState = status === 'fechado' || status === 'perdido' ? { status } : { edit: true }
+    navigate(`/propostas/${lead.id}`, { state })
   }
 
   const hasLeads = (leads?.length ?? 0) > 0

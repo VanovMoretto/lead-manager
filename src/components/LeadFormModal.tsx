@@ -1,50 +1,51 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { createPortal } from 'react-dom'
 import {
   BadgeCheck,
   BedDouble,
   Car,
   Check,
-  Calculator,
   CalendarDays,
   CircleAlert,
-  CircleCheck,
-  CircleX,
-  Clock,
   FileText,
   LoaderCircle,
   MapPin,
   MonitorSpeaker,
-  Pencil,
   RefreshCw,
   User,
   UserPlus,
-  Trash2,
   UtensilsCrossed,
   X,
-  type LucideIcon,
 } from 'lucide-react'
-import type { PostgrestError } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
 import { cn } from '../lib/utils'
 import {
+  NEW_CEREMONIALIST,
+  STATUS_OPTIONS,
+  buildInitialState,
+  buildPayload,
+  inputClassName,
+  needsProposalNumber,
+  translateDbError,
+  validate,
+  withCurrentValue,
+  type FieldName,
+  type FormErrors,
+  type FormState,
+} from '../lib/leadForm'
+import { Field, MoneyInput, Section, YesNoToggle } from './LeadFormFields'
+import {
   formatCNPJ,
-  formatCentsBRL,
   formatPhoneBR,
   isValidCNPJ,
-  isValidEmail,
-  isValidPhoneBR,
   onlyDigits,
-  parseCurrencyInputToCents,
-  toCents,
 } from '../lib/format'
 import { useSettingsOptions } from '../hooks/useSettingsOptions'
-import { NET_RATES_LABEL, computeNetValue, countEventDays, getLeadRooms, isCeremonialistOrigin } from '../lib/leadFields'
+import { countEventDays, isCeremonialistOrigin } from '../lib/leadFields'
 import { useCeremonialists, type Ceremonialist } from '../hooks/useCeremonialists'
 import CeremonialistFormModal from './CeremonialistFormModal'
 import ContactMergeDialog from './ContactMergeDialog'
 import RecurringClientNotice from './RecurringClientNotice'
-import { useAuth } from '../contexts/AuthContext'
 import { useConfirm } from '../hooks/useConfirm'
 import {
   useKnownContacts,
@@ -57,10 +58,8 @@ import {
 import { isSameContactName } from '../lib/clientIdentity'
 import { useCompanyOptions, type CompanyOption } from '../hooks/useCompanies'
 import CompanyAutocomplete from './CompanyAutocomplete'
-import { removeLeadFolders } from '../lib/leadAttachments'
 import { RateLimitError, guardMutation } from '../lib/rateLimit'
 import {
-  CEREMONIALIST_ORIGIN,
   DEFAULT_LOSS_REASONS,
   LOSS_REASON_OTHER,
   type ClientContact,
@@ -73,538 +72,24 @@ import {
 // Tipos públicos
 // =============================================================================
 
-export type LeadFormMode = 'create' | 'edit'
 
 type LeadFormModalProps = {
   open: boolean
   onClose: () => void
-  /** Lead a editar. Sem ele, o modal cadastra um lead novo. */
-  lead?: Lead | null
   /** Chamado após salvar com sucesso, com a linha retornada pelo banco. */
-  onSaved?: (lead: Lead, mode: LeadFormMode) => void
-  /** Chamado após excluir o lead (só no modo edição). */
-  onDeleted?: (lead: Lead) => void
+  onSaved?: (lead: Lead) => void
   /** Proposta nova já vinculada a este cliente (aberta pela página do cliente). */
   presetClient?: RecurringClientMatch | null
 }
 
 // =============================================================================
-// Estado do formulário
-// =============================================================================
-
-type FormState = {
-  contact_name: string
-  contact_phone: string
-  contact_email: string
-  /** Empresa do contato (vazio = pessoa física). */
-  company: string
-  cnpj: string
-  /** Cliente pediu para não receber comunicações/mailing (LGPD). */
-  marketing_opt_out: boolean
-  origin: string
-  /** Cerimonialista que indicou (só vale com o meio de prospecção "Cerimonialista"). */
-  ceremonialist_id: string
-  /** Salas marcadas (seleção múltipla). */
-  room_interests: string[]
-  /** Checkbox "Cliente ainda sem data definida" (coluna is_date_flexible). */
-  no_date: boolean
-  event_date: string
-  /** Evento de mais de um dia: mostra a data final. */
-  multi_day: boolean
-  event_end_date: string
-  date_notes: string
-  /** Valores em centavos, para formatar a moeda sem erro de ponto flutuante. */
-  /** Locação / Espaço (coluna proposed_value). */
-  value_cents: number | null
-  has_ab: boolean
-  ab_cents: number | null
-  has_lodging: boolean
-  lodging_cents: number | null
-  has_equipment: boolean
-  equipment_cents: number | null
-  has_parking: boolean
-  parking_cents: number | null
-  event_name: string
-  /** Só dígitos (o campo aceita apenas números). */
-  pax: string
-  proposal_sent: boolean
-  proposal_number: string
-  status: LeadStatus
-  loss_reason: string
-  loss_reason_details: string
-  /** Mostra o campo de detalhes mesmo quando o motivo não é "Outros". */
-  show_loss_details: boolean
-}
-
-type FieldName = keyof FormState
-type FormErrors = Partial<Record<FieldName, string>>
-
-function buildInitialState(lead?: Lead | null, presetClient?: RecurringClientMatch | null): FormState {
-  // Proposta aberta pelo painel da cerimonialista: indicação dela, para um cliente novo
-  const presetCeremonialist = !lead && presetClient?.client.client_type === 'ceremonialist' ? presetClient.client : null
-  // Proposta para um cliente já cadastrado: começa com a empresa e o contato principal
-  const presetContact = !lead && !presetCeremonialist ? presetClient?.contacts.find((contact) => contact.active) : undefined
-  const presetCompany = !lead && presetClient?.client.client_type === 'company' ? presetClient.client.name : ''
-  return {
-    contact_name: lead?.contact_name ?? presetContact?.name ?? '',
-    contact_phone: lead?.contact_phone ? formatPhoneBR(lead.contact_phone) : presetContact?.phone ? formatPhoneBR(presetContact.phone) : '',
-    contact_email: lead?.contact_email ?? presetContact?.email ?? '',
-    company: lead?.company ?? presetCompany,
-    cnpj: lead?.cnpj ? formatCNPJ(lead.cnpj) : !lead && presetClient?.client.cnpj ? formatCNPJ(presetClient.client.cnpj) : '',
-    marketing_opt_out: lead?.marketing_opt_out ?? false,
-    origin: lead?.origin ?? (presetCeremonialist ? CEREMONIALIST_ORIGIN : ''),
-    ceremonialist_id: lead?.ceremonialist_id ?? presetCeremonialist?.id ?? '',
-    room_interests: lead ? [...getLeadRooms(lead)] : [],
-    no_date: lead?.is_date_flexible ?? false,
-    event_date: lead?.event_date ?? '',
-    multi_day: Boolean(lead?.event_end_date),
-    event_end_date: lead?.event_end_date ?? '',
-    date_notes: lead?.date_notes ?? '',
-    value_cents: toCents(lead?.proposed_value),
-    has_ab: lead?.has_ab ?? false,
-    ab_cents: lead?.has_ab ? toCents(lead.ab_value) ?? null : null,
-    has_lodging: lead?.has_lodging ?? false,
-    lodging_cents: lead?.has_lodging ? toCents(lead.lodging_value) ?? null : null,
-    has_equipment: lead?.has_equipment ?? false,
-    equipment_cents: lead?.has_equipment ? toCents(lead.equipment_value) ?? null : null,
-    has_parking: lead?.has_parking ?? false,
-    parking_cents: lead?.has_parking ? toCents(lead.parking_value) ?? null : null,
-    event_name: lead?.event_name ?? '',
-    pax: lead?.pax !== null && lead?.pax !== undefined ? String(lead.pax) : '',
-    proposal_sent: lead?.proposal_sent ?? false,
-    proposal_number: lead?.proposal_number ?? '',
-    status: lead?.status ?? 'em_aberto',
-    loss_reason: lead?.loss_reason ?? '',
-    loss_reason_details: lead?.loss_reason_details ?? '',
-    show_loss_details: Boolean(lead?.loss_reason_details),
-  }
-}
-
-/** O número da proposta aparece quando a proposta foi enviada ou o lead fechou. */
-function needsProposalNumber(state: FormState): boolean {
-  return state.proposal_sent || state.status === 'fechado'
-}
-
-function needsLossDetails(state: FormState): boolean {
-  return state.loss_reason === LOSS_REASON_OTHER || state.show_loss_details
-}
-
-type ValidateOptions = {
-  /** Proposta nova: locação, salas e data (quando há data) são obrigatórias. */
-  requireCore: boolean
-  /** Há salas cadastradas no Painel Admin para escolher. */
-  hasRooms: boolean
-}
-
-function validate(state: FormState, { requireCore, hasRooms }: ValidateOptions): FormErrors {
-  const errors: FormErrors = {}
-
-  if (!state.contact_name.trim()) {
-    errors.contact_name = 'Informe o nome do contato.'
-  }
-  if (onlyDigits(state.contact_phone).length > 0 && !isValidPhoneBR(state.contact_phone)) {
-    errors.contact_phone = 'Telefone incompleto. Use DDD + número.'
-  }
-  if (onlyDigits(state.cnpj).length > 0 && !isValidCNPJ(state.cnpj)) {
-    errors.cnpj = 'CNPJ inválido. Confira os 14 dígitos.'
-  }
-  if (state.contact_email.trim() && !isValidEmail(state.contact_email)) {
-    errors.contact_email = 'E-mail inválido.'
-  }
-  // Na ordem do formulário: o primeiro erro recebe o foco
-  if (requireCore && hasRooms && state.room_interests.length === 0) {
-    errors.room_interests = 'Selecione ao menos uma sala/salão.'
-  }
-  if (requireCore && !state.no_date && !state.event_date) {
-    errors.event_date = state.multi_day ? 'Informe a data inicial.' : 'Informe a data de interesse ou marque "Cliente ainda sem data definida".'
-  }
-  if (!state.no_date && state.multi_day) {
-    if (state.event_end_date && !state.event_date) {
-      errors.event_date = 'Informe a data inicial.'
-    } else if (state.event_date && !state.event_end_date) {
-      errors.event_end_date = 'Informe a data final.'
-    } else if (state.event_date && state.event_end_date && state.event_end_date < state.event_date) {
-      errors.event_end_date = 'A data final precisa ser igual ou posterior à inicial.'
-    }
-  }
-  if (requireCore && state.value_cents === null) {
-    errors.value_cents = 'Informe o valor de locação / espaço.'
-  }
-  if (state.status === 'fechado' && !state.proposal_number.trim()) {
-    errors.proposal_number = 'Informe o número da proposta para registrar o fechamento.'
-  }
-  if (state.status === 'perdido' && !state.loss_reason) {
-    errors.loss_reason = 'Selecione o motivo da perda.'
-  }
-  if (state.status === 'perdido' && state.loss_reason === LOSS_REASON_OTHER && !state.loss_reason_details.trim()) {
-    errors.loss_reason_details = 'Descreva o motivo.'
-  }
-
-  return errors
-}
-
-/** Monta o payload do banco, limpando campos que não se aplicam à situação escolhida. */
-function buildPayload(state: FormState, forceOptOut = false): LeadInsert {
-  const isLost = state.status === 'perdido'
-  const isClosed = state.status === 'fechado'
-  const phoneDigits = onlyDigits(state.contact_phone)
-
-  return {
-    contact_name: state.contact_name.trim(),
-    contact_phone: phoneDigits.length > 0 ? formatPhoneBR(phoneDigits) : null,
-    contact_email: state.contact_email.trim() ? state.contact_email.trim().toLowerCase() : null,
-    company: state.company.trim().replace(/\s+/g, ' ') || null,
-    cnpj: isValidCNPJ(state.cnpj) ? formatCNPJ(state.cnpj) : null,
-    marketing_opt_out: state.marketing_opt_out || forceOptOut,
-    origin: state.origin || null,
-    ceremonialist_id: isCeremonialistOrigin(state.origin) && state.ceremonialist_id ? state.ceremonialist_id : null,
-    room_interests: state.room_interests,
-    is_date_flexible: state.no_date,
-    event_date: state.no_date ? null : state.event_date || null,
-    // Mais de um dia só quando a data final é posterior à inicial; igual à inicial é evento de um dia
-    event_end_date:
-      !state.no_date && state.multi_day && state.event_date && state.event_end_date > state.event_date
-        ? state.event_end_date
-        : null,
-    date_notes: state.no_date ? state.date_notes.trim() || null : null,
-    proposed_value: state.value_cents === null ? null : state.value_cents / 100,
-    has_ab: state.has_ab,
-    // Desmarcou A&B/Hospedagem: o valor correspondente vai zerado
-    ab_value: state.has_ab ? (state.ab_cents ?? 0) / 100 : 0,
-    has_lodging: state.has_lodging,
-    lodging_value: state.has_lodging ? (state.lodging_cents ?? 0) / 100 : 0,
-    has_equipment: state.has_equipment,
-    equipment_value: state.has_equipment ? (state.equipment_cents ?? 0) / 100 : 0,
-    has_parking: state.has_parking,
-    parking_value: state.has_parking ? (state.parking_cents ?? 0) / 100 : 0,
-    event_name: state.event_name.trim().replace(/\s+/g, ' ') || null,
-    pax: state.pax ? Number.parseInt(state.pax, 10) : null,
-    // Lead fechado implica proposta enviada
-    proposal_sent: state.proposal_sent || isClosed,
-    proposal_number: needsProposalNumber(state) ? state.proposal_number.trim() || null : null,
-    status: state.status,
-    loss_reason: isLost ? state.loss_reason || null : null,
-    loss_reason_details: isLost && needsLossDetails(state) ? state.loss_reason_details.trim() || null : null,
-  }
-}
-
-/** Traduz erros do Postgres/PostgREST para mensagens úteis. */
-function translateDbError(error: PostgrestError): { message: string; field?: FieldName } {
-  if (error.code === '23505' && error.message.includes('proposal_number')) {
-    return { message: 'Já existe uma proposta com este número.', field: 'proposal_number' }
-  }
-  if (error.code === '23514') {
-    if (error.message.includes('leads_loss_reason_required')) {
-      return { message: 'Selecione o motivo da perda.', field: 'loss_reason' }
-    }
-    if (error.message.includes('leads_contact_name_not_blank')) {
-      return { message: 'Informe o nome do contato.', field: 'contact_name' }
-    }
-    if (error.message.includes('leads_cnpj_digits_length')) {
-      return { message: 'CNPJ inválido. Confira os 14 dígitos.', field: 'cnpj' }
-    }
-    if (error.message.includes('leads_text_lengths')) {
-      return { message: 'Algum campo passou do tamanho máximo permitido. Encurte o texto e tente de novo.' }
-    }
-    if (error.message.includes('leads_event_period_valid')) {
-      return { message: 'A data final precisa ser igual ou posterior à inicial.', field: 'event_end_date' }
-    }
-    if (error.message.includes('_value_non_negative')) {
-      return { message: 'Os valores da proposta não podem ser negativos.' }
-    }
-    return { message: 'Algum campo tem um valor que o banco não aceitou. Revise o formulário.' }
-  }
-  if (error.code === 'P0001' && error.message.includes('Limite de requisições')) {
-    return { message: 'Limite de requisições excedido. Aguarde um instante e tente de novo.' }
-  }
-  if (error.code === '42501') {
-    return { message: 'Você não tem permissão para salvar este lead. Faça login novamente.' }
-  }
-  if (error.code === 'PGRST204' || error.code === '42703') {
-    return { message: 'O banco de dados está desatualizado. Rode a migração 002 no SQL Editor do Supabase.' }
-  }
-  if (error.code === 'PGRST116') {
-    return { message: 'Esta proposta não foi encontrada. Ela pode ter sido excluída por outra pessoa.' }
-  }
-  if (error.message.toLowerCase().includes('failed to fetch')) {
-    return { message: 'Sem conexão com o servidor. Verifique sua internet e tente novamente.' }
-  }
-  return { message: 'Não foi possível salvar a proposta. Tente novamente.' }
-}
-
-/** Receita total da proposta em centavos: locação + A&B + hospedagem (só o que estiver marcado). */
-function computeTotalCents(state: FormState): number {
-  return (
-    (state.value_cents ?? 0) +
-    (state.has_ab ? state.ab_cents ?? 0 : 0) +
-    (state.has_lodging ? state.lodging_cents ?? 0 : 0) +
-    (state.has_equipment ? state.equipment_cents ?? 0 : 0) +
-    (state.has_parking ? state.parking_cents ?? 0 : 0)
-  )
-}
-
-/** Receita Líquida do Hotel em centavos (mesma regra da coluna net_value do banco). */
-function computeNetCents(state: FormState): number {
-  const reais = (cents: number | null, enabled = true) => (enabled ? (cents ?? 0) / 100 : 0)
-  return Math.round(
-    computeNetValue({
-      rental: reais(state.value_cents),
-      ab: reais(state.ab_cents, state.has_ab),
-      lodging: reais(state.lodging_cents, state.has_lodging),
-      equipment: reais(state.equipment_cents, state.has_equipment),
-      parking: reais(state.parking_cents, state.has_parking),
-    }) * 100,
-  )
-}
-
-/** Garante que o valor atual apareça no select, mesmo que a opção tenha sido desativada. */
-function withCurrentValue(labels: string[], current: string): string[] {
-  if (current && !labels.includes(current)) {
-    return [current, ...labels]
-  }
-  return labels
-}
-
-// =============================================================================
-// Componentes visuais internos
-// =============================================================================
-
-const inputBaseClassName = cn(
-  'block w-full rounded-lg border bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm transition-colors',
-  'placeholder:text-slate-400 focus:outline-none focus:ring-2',
-  'dark:bg-slate-950 dark:text-white dark:placeholder:text-slate-500',
-  'disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500 dark:disabled:bg-slate-900 dark:disabled:text-slate-400',
-  'disabled:cursor-not-allowed disabled:opacity-60',
-)
-
-function inputClassName(hasError: boolean) {
-  return cn(
-    inputBaseClassName,
-    hasError
-      ? 'border-red-400 focus:border-red-500 focus:ring-red-500/20 dark:border-red-700'
-      : 'border-slate-200 focus:border-brand-600 focus:ring-brand-600/20 dark:border-slate-700',
-  )
-}
-
-type FieldProps = {
-  label: string
-  htmlFor: string
-  required?: boolean
-  error?: string
-  hint?: string
-  className?: string
-  children: ReactNode
-}
-
-function Field({ label, htmlFor, required, error, hint, className, children }: FieldProps) {
-  return (
-    <div className={className}>
-      <label htmlFor={htmlFor} className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">
-        {label}
-        {required && <span className="ml-0.5 text-red-500">*</span>}
-      </label>
-      {children}
-      {error ? (
-        <p id={`${htmlFor}-error`} className="mt-1.5 text-xs font-medium text-red-600 dark:text-red-400">
-          {error}
-        </p>
-      ) : (
-        hint && <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">{hint}</p>
-      )}
-    </div>
-  )
-}
-
-type SectionProps = {
-  icon: LucideIcon
-  title: string
-  children: ReactNode
-}
-
-function Section({ icon: Icon, title, children }: SectionProps) {
-  return (
-    <section className="space-y-4">
-      <div className="flex items-center gap-2">
-        <span className="flex h-7 w-7 items-center justify-center rounded-md bg-brand-50 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300">
-          <Icon className="h-4 w-4" aria-hidden="true" />
-        </span>
-        <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-700 dark:text-slate-200">{title}</h3>
-      </div>
-      {children}
-    </section>
-  )
-}
-
-type MoneyInputProps = {
-  id: string
-  cents: number | null
-  invalid?: boolean
-  onChange: (cents: number | null) => void
-}
-
-/** Campo de moeda em R$: os dígitos entram da direita (centavos primeiro). */
-function MoneyInput({ id, cents, invalid = false, onChange }: MoneyInputProps) {
-  return (
-    <input
-      id={id}
-      aria-invalid={invalid}
-      aria-describedby={invalid ? `${id}-error` : undefined}
-      type="text"
-      inputMode="numeric"
-      autoComplete="off"
-      placeholder="R$ 0,00"
-      value={cents === null ? '' : formatCentsBRL(cents)}
-      onChange={(event) => onChange(parseCurrencyInputToCents(event.target.value))}
-      className={cn(inputClassName(invalid), 'tabular-nums')}
-    />
-  )
-}
-
-type YesNoToggleProps = {
-  id: string
-  label: string
-  icon?: LucideIcon
-  value: boolean
-  onChange: (value: boolean) => void
-  disabled?: boolean
-  /** Rótulo em cima e botões embaixo, na altura de um campo (alinha com um campo ao lado). */
-  stacked?: boolean
-}
-
-/** Botões Sim/Não lado a lado: um clique e pronto. */
-function YesNoToggle({ id, label, icon: Icon, value, onChange, disabled, stacked = false }: YesNoToggleProps) {
-  if (stacked) {
-    return (
-      <div>
-        <p id={`${id}-label`} className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-slate-700 dark:text-slate-200">
-          {Icon && <Icon className="h-4 w-4 text-slate-400" aria-hidden="true" />}
-          {label}
-        </p>
-        <div
-          role="radiogroup"
-          aria-labelledby={`${id}-label`}
-          className="grid h-[42px] grid-cols-2 gap-1 rounded-lg border border-slate-200 bg-slate-100 p-1 dark:border-slate-700 dark:bg-slate-800"
-        >
-          {[
-            { optionValue: true, text: 'Sim' },
-            { optionValue: false, text: 'Não' },
-          ].map(({ optionValue, text }) => {
-            const selected = value === optionValue
-            return (
-              <button
-                key={text}
-                type="button"
-                role="radio"
-                aria-checked={selected}
-                disabled={disabled}
-                onClick={() => onChange(optionValue)}
-                className={cn(
-                  'rounded-md text-sm font-semibold transition-colors disabled:cursor-not-allowed',
-                  selected
-                    ? optionValue
-                      ? 'bg-brand-600 text-white shadow-sm'
-                      : 'bg-white text-slate-900 shadow-sm dark:bg-slate-600 dark:text-white'
-                    : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200',
-                )}
-              >
-                {text}
-              </button>
-            )
-          })}
-        </div>
-      </div>
-    )
-  }
-
-  return (
-    <div className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-950">
-      <span id={`${id}-label`} className="flex min-w-0 items-center gap-2 text-sm font-medium leading-tight text-slate-700 dark:text-slate-200">
-        {Icon && <Icon className="h-4 w-4 text-slate-400" aria-hidden="true" />}
-        {label}
-      </span>
-      <div
-        role="radiogroup"
-        aria-labelledby={`${id}-label`}
-        className="inline-flex shrink-0 rounded-lg bg-slate-100 p-0.5 dark:bg-slate-800"
-      >
-        {[
-          { optionValue: true, text: 'Sim' },
-          { optionValue: false, text: 'Não' },
-        ].map(({ optionValue, text }) => {
-          const selected = value === optionValue
-          return (
-            <button
-              key={text}
-              type="button"
-              role="radio"
-              aria-checked={selected}
-              disabled={disabled}
-              onClick={() => onChange(optionValue)}
-              className={cn(
-                'min-w-[2.75rem] rounded-md px-2.5 py-1 text-sm font-semibold transition-colors disabled:cursor-not-allowed',
-                selected
-                  ? optionValue
-                    ? 'bg-brand-600 text-white shadow-sm'
-                    : 'bg-white text-slate-900 shadow-sm dark:bg-slate-600 dark:text-white'
-                  : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200',
-              )}
-            >
-              {text}
-            </button>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
-
-type StatusOption = {
-  value: LeadStatus
-  title: string
-  subtitle: string
-  icon: LucideIcon
-  selectedClassName: string
-  iconClassName: string
-}
-
-const STATUS_OPTIONS: StatusOption[] = [
-  {
-    value: 'em_aberto',
-    title: 'Em Aberto',
-    subtitle: 'Negociação',
-    icon: Clock,
-    selectedClassName: 'border-amber-400 bg-amber-50 ring-2 ring-amber-400/30 dark:border-amber-500 dark:bg-amber-950/30',
-    iconClassName: 'text-amber-600 dark:text-amber-400',
-  },
-  {
-    value: 'fechado',
-    title: 'Fechou',
-    subtitle: 'Fechado',
-    icon: CircleCheck,
-    selectedClassName: 'border-emerald-500 bg-emerald-50 ring-2 ring-emerald-500/30 dark:border-emerald-500 dark:bg-emerald-950/30',
-    iconClassName: 'text-emerald-600 dark:text-emerald-400',
-  },
-  {
-    value: 'perdido',
-    title: 'Não Fechou',
-    subtitle: 'Perdido',
-    icon: CircleX,
-    selectedClassName: 'border-red-400 bg-red-50 ring-2 ring-red-400/30 dark:border-red-500 dark:bg-red-950/30',
-    iconClassName: 'text-red-600 dark:text-red-400',
-  },
-]
-
-// =============================================================================
 // Formulário (remontado a cada abertura, para sempre começar limpo)
 // =============================================================================
 
-const NEW_CEREMONIALIST = '__nova__'
 
 type LeadFormProps = {
-  lead: Lead | null
   onCancel: () => void
-  onSaved?: (lead: Lead, mode: LeadFormMode) => void
-  onDeleted?: (lead: Lead) => void
+  onSaved?: (lead: Lead) => void
   /** Pede um formulário novo e vazio (usado em "Salvar e cadastrar outro"). */
   onRequestReset: () => void
   /** Informa ao modal se há alterações não salvas e se está salvando. */
@@ -612,20 +97,15 @@ type LeadFormProps = {
   presetClient: RecurringClientMatch | null
 }
 
-function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateChange, presetClient }: LeadFormProps) {
-  const mode: LeadFormMode = lead ? 'edit' : 'create'
-  // Excluir lead é exclusivo do ADMIN (o banco também recusa a exclusão de quem não é)
-  const { isAdmin } = useAuth()
-  const confirm = useConfirm()
-  const initialState = useMemo(() => buildInitialState(lead, presetClient), [lead, presetClient])
+function LeadForm({ onCancel, onSaved, onRequestReset, onStateChange, presetClient }: LeadFormProps) {
+  const initialState = useMemo(() => buildInitialState(null, presetClient), [presetClient])
 
   const [form, setForm] = useState<FormState>(initialState)
   const [errors, setErrors] = useState<FormErrors>({})
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
-  const [deleting, setDeleting] = useState(false)
-  /** Salvando ou excluindo: trava os botões e o fechamento do modal. */
-  const busy = submitting || deleting
+  /** Salvando: trava os botões e o fechamento do modal. */
+  const busy = submitting
   const submitIntentRef = useRef<'close' | 'new'>('close')
 
   const { options, loading: optionsLoading, error: optionsError, reload: reloadOptions } = useSettingsOptions()
@@ -675,8 +155,6 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
     pendingFocusRef.current = null
   }, [form.has_ab, form.has_lodging, form.has_equipment, form.has_parking])
 
-  const totalCents = computeTotalCents(form)
-  const netCents = computeNetCents(form)
   const eventDays = form.multi_day
     ? countEventDays({ event_date: form.event_date || null, event_end_date: form.event_end_date || null })
     : null
@@ -690,8 +168,8 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
 
   // Telefone ou e-mail de um contato já cadastrado: preenche o contato e pergunta se mescla com a empresa dele.
   // Aberto pela página do cliente, a empresa já está decidida e não há pergunta.
-  const askMerge = mode === 'create' && !presetClient
-  const known = useKnownContacts({ phone: form.contact_phone, email: form.contact_email, enabled: mode === 'create' })
+  const askMerge = !presetClient
+  const known = useKnownContacts({ phone: form.contact_phone, email: form.contact_email, enabled: true })
   const knownCompanies = useMemo(() => {
     const unique = new Map<string, KnownContactClient>()
     for (const item of known.contacts) {
@@ -738,14 +216,14 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
     phone: form.contact_phone,
     email: form.contact_email,
     company: form.company,
-    enabled: mode === 'create',
+    enabled: true,
     blockedClientIds,
     // Sem resposta (ou com "Não"), os dados do contato não trazem empresa nenhuma sozinhos
     contactSignalsPending: askMerge && (known.checking || (mergeKey !== '' && !mergeAnswer)),
   })
   // Aberto pela página do cliente: o vínculo já está decidido
-  const lockedClient = mode === 'create' ? presetClient : null
-  const clientMatch = mode === 'create' ? (lockedClient ?? recurring.match) : null
+  const lockedClient = presetClient
+  const clientMatch = lockedClient ?? recurring.match
   const [clientChoice, setClientChoice] = useState<ClientLinkChoice | null>(null)
   /** Sem escolha do vendedor para este cliente: "Sim" com o contato reconhecido (ou de mesmo nome). */
   const linkChoice: ClientLinkChoice | null = clientMatch
@@ -772,7 +250,7 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
   const ceremonialistId = showCeremonialist && form.ceremonialist_id ? form.ceremonialist_id : null
   const companyLinked = Boolean(clientMatch?.client.client_type === 'company' && linkChoice?.link)
   const personProposal = personMode || (!companyLinked && !form.company.trim() && !isValidCNPJ(form.cnpj))
-  const ceremonialistOwns = mode === 'create' && !lockedClient && Boolean(ceremonialistId) && personProposal
+  const ceremonialistOwns = !lockedClient && Boolean(ceremonialistId) && personProposal
   const handleCeremonialistCreated = (created: Ceremonialist) => {
     ceremonialists.add(created)
     ceremonialists.reload()
@@ -861,7 +339,7 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
   // CNPJ digitado: preenche a Empresa vazia com o nome do cadastro ou da Receita Federal.
   // Espera a consulta do CNPJ atual terminar (durante a consulta o cartão ainda mostra o cliente anterior)
   const cnpjSuggestion =
-    mode === 'create' && !recurring.checking && isValidCNPJ(form.cnpj)
+    !recurring.checking && isValidCNPJ(form.cnpj)
       ? clientMatch?.reasons.includes('cnpj')
         ? { name: clientMatch.client.name, city: null, source: 'cadastro' as const }
         : recurring.cnpjLookup
@@ -911,8 +389,7 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
     setErrors((current) => ({ ...current, contact_name: undefined, contact_phone: undefined, contact_email: undefined }))
   }
   /** Contato já suprimido: o lead novo nasce com opt-out (o banco também garante isso). */
-  const optOutForced = mode === 'create' && recurring.suppressed
-  const optOutRevoking = mode === 'edit' && initialState.marketing_opt_out && !form.marketing_opt_out
+  const optOutForced = recurring.suppressed
   const optOutHint = optOutForced
     ? 'Marcado automaticamente: o contato está na lista de opt-out.'
     : form.marketing_opt_out && !initialState.marketing_opt_out
@@ -964,7 +441,7 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
     if (busy) return
 
     const validationErrors = validate(personMode ? { ...form, cnpj: '' } : form, {
-      requireCore: mode === 'create',
+      requireCore: true,
       hasRooms: roomLabels.length > 0,
     })
     const firstError = Object.keys(validationErrors)[0] as FieldName | undefined
@@ -1021,10 +498,8 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
     let response
     try {
       // Mesmo envio repetido em menos de 1,5 s (duplo clique, Enter segurado) é recusado
-      response = await guardMutation(`lead:save:${lead?.id ?? 'novo'}:${JSON.stringify(payload)}`, async () =>
-        lead
-          ? await supabase.from('leads').update(payload).eq('id', lead.id).select().single()
-          : await supabase.from('leads').insert(payload).select().single(),
+      response = await guardMutation(`lead:save:novo:${JSON.stringify(payload)}`, async () =>
+        supabase.from('leads').insert(payload).select().single(),
       )
     } catch (guardError) {
       setSubmitting(false)
@@ -1044,48 +519,13 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
       return
     }
 
-    onSaved?.(response.data, mode)
+    onSaved?.(response.data)
 
-    if (submitIntentRef.current === 'new' && mode === 'create') {
+    if (submitIntentRef.current === 'new') {
       onRequestReset()
     } else {
       onCancel()
     }
-  }
-
-  const handleDelete = async () => {
-    if (!lead || busy) return
-    const confirmed = await confirm({
-      title: `Excluir a proposta de "${lead.contact_name}"?`,
-      description: 'Essa ação é permanente e remove todos os dados deste orçamento, inclusive os anexos.',
-      confirmLabel: 'Excluir proposta',
-      tone: 'danger',
-    })
-    if (!confirmed) return
-
-    setDeleting(true)
-    setSubmitError(null)
-    // .select() devolve as linhas apagadas: lista vazia = nada foi excluído (lead inexistente ou sem permissão)
-    const { data, error } = await supabase.from('leads').delete().eq('id', lead.id).select('id')
-    setDeleting(false)
-
-    if (error) {
-      setSubmitError(
-        error.message.toLowerCase().includes('failed to fetch')
-          ? 'Sem conexão com o servidor. A proposta não foi excluída.'
-          : 'Não foi possível excluir a proposta. Tente novamente.',
-      )
-      return
-    }
-    if (!data || data.length === 0) {
-      setSubmitError('Esta proposta não foi excluída: ela já não existe ou apenas o ADMIN pode excluir propostas.')
-      return
-    }
-
-    // Os arquivos anexados saem do bucket junto com a proposta
-    await removeLeadFolders([lead.id])
-    onDeleted?.(lead)
-    onCancel()
   }
 
   const showProposalNumber = needsProposalNumber(form)
@@ -1222,8 +662,7 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
           </div>
 
           {/* Só no cadastro: cliente já cadastrado (pergunta se entra no histórico) e opt-out da LGPD (não bloqueia) */}
-          {mode === 'create' && (
-            <RecurringClientNotice
+          <RecurringClientNotice
               checking={recurring.checking}
               // Pessoa física indicada por cerimonialista: o cadastro de pessoa física dá lugar ao histórico dela
               match={ceremonialistOwns && clientMatch?.client.client_type === 'individual' ? null : clientMatch}
@@ -1235,7 +674,6 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
               onSelectBranch={handleSelectBranch}
               onNewBranch={handleNewBranch}
             />
-          )}
           {showMergeDialog &&
             createPortal(
               <ContactMergeDialog contactName={form.contact_name.trim()} companies={knownCompanies} onAnswer={handleMergeAnswer} />,
@@ -1262,12 +700,6 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
               </span>
             </label>
             {optOutHint && <p className="mt-1 pl-[1.625rem] text-xs text-slate-500 dark:text-slate-400">{optOutHint}</p>}
-            {optOutRevoking && (
-              <p role="alert" className="mt-1.5 pl-[1.625rem] text-xs font-medium text-amber-700 dark:text-amber-400">
-                Ao salvar, o opt-out deixa de valer para todos os leads com o mesmo e-mail ou telefone deste lead. Faça isso
-                apenas se o cliente deu novo consentimento.
-              </p>
-            )}
           </div>
         </Section>
 
@@ -1352,7 +784,7 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
             <div className="mb-1.5 flex items-baseline justify-between gap-2">
               <p id="lead-rooms-label" className="text-sm font-medium text-slate-700 dark:text-slate-200">
                 Salas/Salões de interesse
-                {mode === 'create' && roomLabels.length > 0 && <span className="ml-0.5 text-red-500">*</span>}
+                {roomLabels.length > 0 && <span className="ml-0.5 text-red-500">*</span>}
               </p>
               {form.room_interests.length > 0 && (
                 <span className="text-xs font-medium text-brand-700 dark:text-brand-300">
@@ -1496,7 +928,7 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
                 <Field
                   label={form.multi_day ? 'Data inicial' : 'Data de interesse'}
                   htmlFor="lead-event_date"
-                  required={mode === 'create'}
+                  required
                   error={errors.event_date}
                 >
                   <input
@@ -1532,7 +964,7 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
           )}
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Field label="Valor de Locação / Espaço (R$)" htmlFor="lead-value_cents" required={mode === 'create'} error={errors.value_cents}>
+            <Field label="Valor de Locação / Espaço (R$)" htmlFor="lead-value_cents" required error={errors.value_cents}>
               <MoneyInput
                 id="lead-value_cents"
                 cents={form.value_cents}
@@ -1613,39 +1045,6 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
             </div>
           </div>
 
-          {/* Resumo das receitas: só na edição (no cadastro os valores ainda estão sendo digitados) */}
-          {mode === 'edit' && (
-          <div
-            className="overflow-hidden rounded-xl border border-brand-200 bg-brand-50 dark:border-brand-900/60 dark:bg-brand-900/20"
-            aria-live="polite"
-          >
-            <div className="flex items-center gap-3 border-b border-brand-200/70 px-4 py-3 dark:border-brand-900/50">
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-brand-600 text-white">
-                <Calculator className="h-5 w-5" aria-hidden="true" />
-              </span>
-              <div className="min-w-0 flex-1 leading-tight">
-                <p className="text-xs font-semibold uppercase tracking-wide text-brand-800 dark:text-brand-200">Locação de sala</p>
-              </div>
-              <p className="text-2xl font-bold tabular-nums text-brand-900 dark:text-white">{formatCentsBRL(form.value_cents ?? 0)}</p>
-            </div>
-            <dl className="divide-y divide-brand-200/60 px-4 text-sm dark:divide-brand-900/40">
-              <div className="flex items-baseline justify-between gap-3 py-2">
-                <dt className="min-w-0">
-                  <span className="font-medium text-slate-800 dark:text-slate-100">Receita líquida total</span>
-                  <span className="block text-xs text-slate-500 dark:text-slate-400">{NET_RATES_LABEL}</span>
-                </dt>
-                <dd className="font-semibold tabular-nums text-slate-900 dark:text-white">{formatCentsBRL(netCents)}</dd>
-              </div>
-              <div className="flex items-baseline justify-between gap-3 py-2">
-                <dt className="min-w-0">
-                  <span className="font-medium text-slate-800 dark:text-slate-100">Receita bruta total</span>
-                  <span className="block text-xs text-slate-500 dark:text-slate-400">Soma integral de todos os serviços</span>
-                </dt>
-                <dd className="font-semibold tabular-nums text-slate-900 dark:text-white">{formatCentsBRL(totalCents)}</dd>
-              </div>
-            </dl>
-          </div>
-          )}
         </Section>
 
         {/* 4. Proposta e fechamento */}
@@ -1780,19 +1179,7 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
           </div>
         )}
         <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
-          {mode === 'edit' && isAdmin ? (
-            <button
-              type="button"
-              onClick={() => void handleDelete()}
-              disabled={busy}
-              className="inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-red-600 transition-colors hover:bg-red-50 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-60 dark:text-red-400 dark:hover:bg-red-950/40 dark:hover:text-red-300"
-            >
-              {deleting ? <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Trash2 className="h-4 w-4" aria-hidden="true" />}
-              {deleting ? 'Excluindo...' : 'Excluir proposta'}
-            </button>
-          ) : (
-            <span className="hidden sm:block" aria-hidden="true" />
-          )}
+          <span className="hidden sm:block" aria-hidden="true" />
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center">
           <button
             type="button"
@@ -1802,18 +1189,16 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
           >
             Cancelar
           </button>
-          {mode === 'create' && (
-            <button
-              type="submit"
-              disabled={busy}
-              onClick={() => {
-                submitIntentRef.current = 'new'
-              }}
-              className="rounded-lg border border-brand-200 px-4 py-2.5 text-sm font-semibold text-brand-700 transition-colors hover:bg-brand-50 disabled:opacity-60 dark:border-brand-800 dark:text-brand-300 dark:hover:bg-brand-900/30"
-            >
-              Salvar e cadastrar outro
-            </button>
-          )}
+          <button
+            type="submit"
+            disabled={busy}
+            onClick={() => {
+              submitIntentRef.current = 'new'
+            }}
+            className="rounded-lg border border-brand-200 px-4 py-2.5 text-sm font-semibold text-brand-700 transition-colors hover:bg-brand-50 disabled:opacity-60 dark:border-brand-800 dark:text-brand-300 dark:hover:bg-brand-900/30"
+          >
+            Salvar e cadastrar outro
+          </button>
           <button
             type="submit"
             disabled={busy}
@@ -1823,7 +1208,7 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
             className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-70"
           >
             {submitting && <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />}
-            {submitting ? 'Salvando...' : mode === 'create' ? 'Cadastrar proposta' : 'Salvar alterações'}
+            {submitting ? 'Salvando...' : 'Cadastrar proposta'}
           </button>
           </div>
         </div>
@@ -1836,7 +1221,7 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
 // Modal (painel lateral)
 // =============================================================================
 
-export default function LeadFormModal({ open, onClose, lead = null, onSaved, onDeleted, presetClient = null }: LeadFormModalProps) {
+export default function LeadFormModal({ open, onClose, onSaved, presetClient = null }: LeadFormModalProps) {
   // A cada abertura, gera uma nova chave para remontar o formulário limpo
   const [sessionKey, setSessionKey] = useState(open ? 1 : 0)
   const [wasOpen, setWasOpen] = useState(open)
@@ -1884,9 +1269,6 @@ export default function LeadFormModal({ open, onClose, lead = null, onSaved, onD
     }
   }, [open, requestClose])
 
-  const isEdit = Boolean(lead)
-  const HeaderIcon = isEdit ? Pencil : UserPlus
-
   return (
     <div
       className={cn('fixed inset-0 z-50', open ? 'pointer-events-auto' : 'pointer-events-none')}
@@ -1914,16 +1296,14 @@ export default function LeadFormModal({ open, onClose, lead = null, onSaved, onD
         <header className="flex items-center justify-between gap-3 border-b border-slate-200 px-5 py-4 sm:px-6 dark:border-slate-800">
           <div className="flex min-w-0 items-center gap-3">
             <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300">
-              <HeaderIcon className="h-5 w-5" aria-hidden="true" />
+              <UserPlus className="h-5 w-5" aria-hidden="true" />
             </span>
             <div className="min-w-0">
               <h2 id="lead-form-title" className="text-lg font-semibold text-slate-900 dark:text-white">
-                {isEdit ? 'Editar Proposta' : 'Nova Proposta'}
+                Nova Proposta
               </h2>
-              {(isEdit || presetClient) && (
-                <p className="truncate text-sm text-slate-500 dark:text-slate-400">
-                  {isEdit ? lead?.contact_name : `Para ${presetClient?.client.name}`}
-                </p>
+              {presetClient && (
+                <p className="truncate text-sm text-slate-500 dark:text-slate-400">Para {presetClient.client.name}</p>
               )}
             </div>
           </div>
@@ -1939,12 +1319,10 @@ export default function LeadFormModal({ open, onClose, lead = null, onSaved, onD
 
         {sessionKey > 0 && (
           <LeadForm
-            key={`${sessionKey}-${lead?.id ?? 'new'}-${presetClient?.client.id ?? ''}`}
-            lead={lead}
+            key={`${sessionKey}-${presetClient?.client.id ?? ''}`}
             presetClient={presetClient}
             onCancel={onClose}
             onSaved={onSaved}
-            onDeleted={onDeleted}
             onRequestReset={() => setSessionKey((current) => current + 1)}
             onStateChange={handleFormStateChange}
           />
