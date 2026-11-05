@@ -113,6 +113,9 @@ export const SURVEY_STATUS_LABELS: Record<SurveyStatus, string> = {
   respondida: 'Respondida',
 }
 
+/** Nota da pesquisa de satisfação (1 a 10). */
+export const SURVEY_SCORES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const
+
 /** Motivo que torna `loss_reason_details` obrigatório na interface. */
 export const LOSS_REASON_OTHER = 'Outros'
 
@@ -207,6 +210,12 @@ export type Lead = {
   nf_parking: string | null
   payment_status: PaymentStatus
   survey_status: SurveyStatus
+  /** Quando a pesquisa de satisfação foi enviada (o banco preenche ao marcar "enviada"). */
+  survey_sent_at: string | null
+  /** Quando o cliente respondeu (o banco preenche ao marcar "respondida"). */
+  survey_responded_at: string | null
+  /** Nota de satisfação do cliente, de 1 a 10. */
+  survey_score: number | null
 
   /** Usuário que cadastrou o lead (default `auth.uid()`). */
   user_id: UUID | null
@@ -282,6 +291,9 @@ type LeadNullableFields =
   | 'nf_rental'
   | 'nf_ab'
   | 'nf_parking'
+  | 'survey_sent_at'
+  | 'survey_responded_at'
+  | 'survey_score'
 
 /** Payload para criar um lead: só `contact_name` é obrigatório. */
 export type LeadInsert = Omit<Lead, LeadDbDefaults | LeadNullableFields | LeadGeneratedFields> &
@@ -293,7 +305,16 @@ export type LeadUpdate = Partial<LeadInsert>
 /** Estado de um formulário de lead (sem campos controlados pelo banco). */
 export type LeadFormData = Omit<
   Lead,
-  'id' | 'created_at' | 'updated_at' | 'user_id' | 'client_id' | 'contact_id' | LeadGeneratedFields
+  | 'id'
+  | 'created_at'
+  | 'updated_at'
+  | 'user_id'
+  | 'client_id'
+  | 'contact_id'
+  | 'survey_sent_at'
+  | 'survey_responded_at'
+  | 'survey_score'
+  | LeadGeneratedFields
 >
 
 /** Valores iniciais de um formulário de novo lead. */
@@ -478,7 +499,8 @@ export type ClientSummary = Client & {
 
 /** Linha da tabela `user_profiles` (um perfil por usuário do Supabase Auth). */
 /** Usuário para a coluna Responsável. */
-export type UserLogin = { user_id: UUID; login: string; is_active: boolean }
+/** `is_active` só vem preenchido para o ADMIN. */
+export type UserLogin = { user_id: UUID; login: string; is_active: boolean | null }
 
 export type UserProfile = {
   user_id: UUID
@@ -504,6 +526,108 @@ export function isLeadStatus(value: unknown): value is LeadStatus {
 export function isSettingCategory(value: unknown): value is SettingCategory {
   return typeof value === 'string' && (SETTING_CATEGORIES as readonly string[]).includes(value)
 }
+
+// =============================================================================
+// Mailing & Pesquisas: campanhas e registro de envios
+// =============================================================================
+
+export const CAMPAIGN_CHANNELS = ['email', 'whatsapp', 'ambos'] as const
+export type CampaignChannel = (typeof CAMPAIGN_CHANNELS)[number]
+export const CAMPAIGN_CHANNEL_LABELS: Record<CampaignChannel, string> = {
+  email: 'E-mail',
+  whatsapp: 'WhatsApp',
+  ambos: 'E-mail e WhatsApp',
+}
+
+export const CAMPAIGN_SEGMENTS = ['all', 'closed_clients', 'open_proposals', 'lost_recover', 'companies_only'] as const
+export type CampaignSegment = (typeof CAMPAIGN_SEGMENTS)[number]
+export const CAMPAIGN_SEGMENT_LABELS: Record<CampaignSegment, string> = {
+  all: 'Toda a base elegível',
+  closed_clients: 'Clientes que já fecharam',
+  open_proposals: 'Propostas em aberto',
+  lost_recover: 'Recuperação de perdidos',
+  companies_only: 'Apenas empresas (B2B)',
+}
+
+export const CAMPAIGN_STATUSES = ['rascunho', 'enviada', 'concluida'] as const
+export type CampaignStatus = (typeof CAMPAIGN_STATUSES)[number]
+export const CAMPAIGN_STATUS_LABELS: Record<CampaignStatus, string> = {
+  rascunho: 'Rascunho',
+  enviada: 'Enviada',
+  concluida: 'Concluída',
+}
+
+/** Linha da tabela `mailing_campaigns`. */
+export type MailingCampaign = {
+  id: UUID
+  name: string
+  channel: CampaignChannel
+  segment_filter: CampaignSegment
+  status: CampaignStatus
+  /** Contatos únicos elegíveis (sem opt-out LGPD) no segmento quando a campanha foi montada. */
+  audience_count: number
+  sent_count: number
+  /** Entregues/recebidos: nunca maior que os enviados. */
+  delivered_count: number
+  /** Abertos: nunca maior que os entregues. */
+  opened_count: number
+  /** Cliques ou respostas: nunca maior que os abertos. */
+  clicked_count: number
+  /** O banco preenche ao marcar como enviada. */
+  sent_at: string | null
+  notes: string | null
+  /** Quem criou (o banco grava o usuário logado). */
+  created_by: UUID | null
+  created_at: string
+  updated_at: string
+}
+
+export type MailingCampaignInsert = Pick<MailingCampaign, 'name'> &
+  Partial<
+    Pick<
+      MailingCampaign,
+      | 'channel'
+      | 'segment_filter'
+      | 'status'
+      | 'audience_count'
+      | 'sent_count'
+      | 'delivered_count'
+      | 'opened_count'
+      | 'clicked_count'
+      | 'sent_at'
+      | 'notes'
+    >
+  >
+export type MailingCampaignUpdate = Partial<MailingCampaignInsert>
+
+export const COMMUNICATION_CHANNELS = ['whatsapp', 'email'] as const
+export type CommunicationChannel = (typeof COMMUNICATION_CHANNELS)[number]
+
+export const COMMUNICATION_PURPOSES = ['follow_up', 'greeting', 'survey', 'campaign', 'proposal'] as const
+export type CommunicationPurpose = (typeof COMMUNICATION_PURPOSES)[number]
+export const COMMUNICATION_PURPOSE_LABELS: Record<CommunicationPurpose, string> = {
+  follow_up: 'Follow-up comercial',
+  greeting: 'Relacionamento / saudação',
+  survey: 'Pesquisa pós-evento',
+  campaign: 'Campanha',
+  proposal: 'Envio de proposta',
+}
+
+/** Linha da tabela `communication_logs`: uma mensagem iniciada pelo app. */
+export type CommunicationLog = {
+  id: UUID
+  lead_id: UUID | null
+  client_id: UUID | null
+  channel: CommunicationChannel
+  purpose: CommunicationPurpose
+  /** Telefone ou e-mail de destino. */
+  recipient: string | null
+  created_by: UUID | null
+  created_at: string
+}
+
+export type CommunicationLogInsert = Pick<CommunicationLog, 'channel' | 'purpose'> &
+  Partial<Pick<CommunicationLog, 'lead_id' | 'client_id' | 'recipient'>>
 
 // =============================================================================
 // Tipo do banco para o cliente Supabase
@@ -549,6 +673,18 @@ export type Database = {
         Insert: LeadAttachmentInsert
         /** Anexos não são editados: troca = enviar outro arquivo. */
         Update: never
+        Relationships: []
+      }
+      mailing_campaigns: {
+        Row: MailingCampaign
+        Insert: MailingCampaignInsert
+        Update: MailingCampaignUpdate
+        Relationships: []
+      }
+      communication_logs: {
+        Row: CommunicationLog
+        Insert: CommunicationLogInsert
+        Update: Partial<CommunicationLogInsert>
         Relationships: []
       }
       user_profiles: {

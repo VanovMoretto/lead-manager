@@ -27,6 +27,15 @@ export function resolveMimeType(file: File, allowed: readonly string[]): string 
   return allowed.includes(mime) ? mime : null
 }
 
+/**
+ * Caminho de arquivo seguro para montar URLs do Storage: só pastas e nomes simples, sem
+ * "." ou "..", barra invertida, "?", "#" ou "%". O caminho vem do banco, gravado por outro usuário.
+ */
+export function isSafeStoragePath(path: string): boolean {
+  if (!path || /[\\?#%]/.test(path)) return false
+  return path.split('/').every((part) => part !== '' && part !== '.' && part !== '..')
+}
+
 /** Nome do arquivo no bucket: identificador aleatório + extensão (o nome original fica no banco). */
 export function randomStorageName(mimeType: string): string {
   return `${crypto.randomUUID()}.${EXTENSION_BY_MIME[mimeType] ?? 'bin'}`

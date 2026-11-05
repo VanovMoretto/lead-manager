@@ -52,6 +52,7 @@ export default function ResetPassword() {
   const [confirmation, setConfirmation] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [otherSessionsEnded, setOtherSessionsEnded] = useState(true)
 
   // Tira os dados do link da barra de endereço e do histórico
   useEffect(() => {
@@ -112,7 +113,8 @@ export default function ResetPassword() {
       return
     }
     // Encerra todas as sessões do usuário (inclusive a do link): o acesso volta só com a nova senha
-    await recoveryClient.auth.signOut({ scope: 'global' }).catch(() => undefined)
+    const globalSignOut = await recoveryClient.auth.signOut({ scope: 'global' }).catch(() => ({ error: true }))
+    setOtherSessionsEnded(!globalSignOut.error)
     await supabase.auth.signOut({ scope: 'local' }).catch(() => undefined)
     setBusy(false)
     setPassword('')
@@ -229,7 +231,9 @@ export default function ResetPassword() {
                 className="flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-sm text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300"
               >
                 <CircleCheck className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-                Senha alterada. Por segurança, todas as sessões foram encerradas: entre com a nova senha.
+                {otherSessionsEnded
+                  ? 'Senha alterada. Por segurança, todas as sessões foram encerradas: entre com a nova senha.'
+                  : 'Senha alterada. Não foi possível encerrar as sessões abertas em outros aparelhos: entre com a nova senha e use "Sair" nos outros aparelhos.'}
               </p>
               <button type="button" onClick={() => navigate('/login', { replace: true })} className={buttonClassName}>
                 Ir para o login

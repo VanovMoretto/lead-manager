@@ -5,7 +5,16 @@
  * As datas são relativas a "hoje", para a Dashboard sempre abrir com o mês atual preenchido,
  * propostas antigas aguardando retorno e eventos passados e futuros.
  */
-import { DEFAULT_LOSS_REASONS, type AttachmentKind, type LeadInsert, type LeadStatus, type SettingCategory } from '../types/lead'
+import {
+  DEFAULT_LOSS_REASONS,
+  type AttachmentKind,
+  type CampaignChannel,
+  type CampaignSegment,
+  type CampaignStatus,
+  type LeadInsert,
+  type LeadStatus,
+  type SettingCategory,
+} from '../types/lead'
 
 export const DEMO_PASSWORD = 'demo1234'
 
@@ -137,6 +146,7 @@ const CNPJ = {
       status: 'fechado',
       payment_status: 'pago',
       survey_status: 'respondida',
+      survey_score: 10,
       nf_rental: 'NF 10482',
       nf_ab: 'NF 10483',
       observations: 'Cliente pediu coffee break reforçado no segundo intervalo. Avaliação final: 9,5.',
@@ -214,6 +224,7 @@ const CNPJ = {
       status: 'fechado',
       payment_status: 'pago',
       survey_status: 'respondida',
+      survey_score: 9,
       nf_rental: 'NF 10611',
       nf_ab: 'NF 10612',
       nf_parking: 'NF 10613',
@@ -288,6 +299,7 @@ const CNPJ = {
       status: 'fechado',
       payment_status: 'pago',
       survey_status: 'respondida',
+      survey_score: 8,
       nf_rental: 'NF 10777',
       nf_ab: 'NF 10778',
     },
@@ -495,6 +507,7 @@ const CNPJ = {
       status: 'fechado',
       payment_status: 'pago',
       survey_status: 'respondida',
+      survey_score: 9,
       nf_rental: 'NF 10390',
       nf_ab: 'NF 10391',
       nf_parking: 'NF 10392',
@@ -631,6 +644,7 @@ const CNPJ = {
       status: 'fechado',
       payment_status: 'pago',
       survey_status: 'respondida',
+      survey_score: 7,
     },
   },
   {
@@ -735,6 +749,7 @@ const CNPJ = {
       status: 'fechado',
       payment_status: 'pago',
       survey_status: 'respondida',
+      survey_score: 10,
     },
   },
   {
@@ -759,3 +774,81 @@ const CNPJ = {
   },
 ]
 }
+
+export type DemoCampaignSeed = {
+  name: string
+  channel: CampaignChannel
+  segment: CampaignSegment
+  status: CampaignStatus
+  /** Dias desde a criação (e o envio, quando enviada). */
+  daysAgo: number
+  user: keyof typeof DEMO_USER_IDS
+  audience: number
+  sent: number
+  delivered: number
+  opened: number
+  clicked: number
+  notes?: string
+}
+
+/** Campanhas de mailing com números realistas para a aba Mailing & Pesquisas. */
+export function demoCampaigns(): DemoCampaignSeed[] {
+  return [
+    {
+      name: 'Newsletter Espaços Renovados',
+      channel: 'email',
+      segment: 'all',
+      status: 'concluida',
+      daysAgo: 34,
+      user: 'admin',
+      audience: 214,
+      sent: 214,
+      delivered: 207,
+      opened: 118,
+      clicked: 31,
+      notes: 'Apresentação do Terraço Gourmet reformado e do novo pacote de equipamentos.',
+    },
+    {
+      name: 'Campanha Eventos Corporativos Q4',
+      channel: 'email',
+      segment: 'companies_only',
+      status: 'concluida',
+      daysAgo: 19,
+      user: 'sales',
+      audience: 96,
+      sent: 96,
+      delivered: 93,
+      opened: 52,
+      clicked: 17,
+      notes: 'Condição especial para convenções e treinamentos fechados até o fim do trimestre.',
+    },
+    {
+      name: 'Recuperação de Propostas Perdidas',
+      channel: 'ambos',
+      segment: 'lost_recover',
+      status: 'enviada',
+      daysAgo: 6,
+      user: 'sales',
+      audience: 38,
+      sent: 38,
+      delivered: 36,
+      opened: 19,
+      clicked: 6,
+    },
+    {
+      name: 'Convite Confraternizações de Fim de Ano',
+      channel: 'whatsapp',
+      segment: 'closed_clients',
+      status: 'rascunho',
+      daysAgo: 1,
+      user: 'admin',
+      audience: 54,
+      sent: 0,
+      delivered: 0,
+      opened: 0,
+      clicked: 0,
+      notes: 'Revisar a arte antes de disparar.',
+    },
+  ]
+}
+

@@ -41,18 +41,26 @@ export function getRememberSession(): boolean {
 /**
  * Onde a sessão fica guardada: localStorage (continua logado ao reabrir o navegador)
  * ou sessionStorage (sai ao fechar a aba), conforme "Manter-me logado".
+ * Uma sessão já gravada continua onde está ao renovar o token: a escolha vale para a
+ * sessão inteira, não para a última tela de login aberta em outra aba.
  */
 const authStorage = {
   getItem(key: string): string | null {
     try {
-      return window.localStorage.getItem(key) ?? window.sessionStorage.getItem(key)
+      return window.sessionStorage.getItem(key) ?? window.localStorage.getItem(key)
     } catch {
       return null
     }
   },
   setItem(key: string, value: string): void {
     try {
-      const [target, other] = getRememberSession()
+      const remember =
+        window.sessionStorage.getItem(key) !== null
+          ? false
+          : window.localStorage.getItem(key) !== null
+            ? true
+            : getRememberSession()
+      const [target, other] = remember
         ? [window.localStorage, window.sessionStorage]
         : [window.sessionStorage, window.localStorage]
       target.setItem(key, value)

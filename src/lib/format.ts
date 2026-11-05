@@ -83,7 +83,7 @@ export function toCents(value: number | null | undefined): number | null {
   return Math.round(value * 100)
 }
 
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/
+const EMAIL_PATTERN = /^[^\s@?&#%,;:<>"()[\]\\]+@[^\s@?&#%,;:<>"()[\]\\]+\.[^\s@?&#%,;:<>"()[\]\\]{2,}$/
 
 export function isValidEmail(value: string): boolean {
   return EMAIL_PATTERN.test(value.trim())

@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import { randomStorageName, translateStorageError, formatFileSize } from './storage'
+import { isSafeStoragePath, randomStorageName, translateStorageError, formatFileSize } from './storage'
 import type { AttachmentKind, LeadAttachment } from '../types/lead'
 
 export const ATTACHMENT_BUCKET = 'lead-attachments'
@@ -60,6 +60,15 @@ export async function fetchLeadAttachments(leadId: string): Promise<LeadAttachme
   return data ?? []
 }
 
+/** Nome original limitado a 255 caracteres sem perder a extensão (o banco exige uma extensão aceita). */
+function attachmentFileName(name: string, path: string): string {
+  const extension = path.split('.').pop() ?? 'pdf'
+  const trimmed = name.trim()
+  if (!trimmed) return `proposta.${extension}`
+  if (trimmed.length <= 255) return trimmed
+  return `${trimmed.slice(0, 250 - extension.length).trimEnd()}.${extension}`
+}
+
 /** Envia o arquivo ao bucket e registra o anexo. Lança Error com mensagem pronta para a tela. */
 export async function uploadLeadAttachment(leadId: string, kind: AttachmentKind, file: File): Promise<LeadAttachment> {
   const mimeType = await validateAttachmentFile(file)
@@ -74,7 +83,7 @@ export async function uploadLeadAttachment(leadId: string, kind: AttachmentKind,
       lead_id: leadId,
       kind,
       storage_path: path,
-      file_name: file.name.trim().slice(0, 255) || `proposta.${path.split('.').pop()}`,
+      file_name: attachmentFileName(file.name, path),
       mime_type: mimeType,
       size_bytes: file.size,
     })
@@ -106,6 +115,7 @@ function downloadFileName(name: string): string {
 
 /** Link temporário do anexo; com `download`, o navegador baixa com o nome original (sem acentos). */
 async function signedUrl(attachment: LeadAttachment, download: boolean): Promise<string> {
+  if (!isSafeStoragePath(attachment.storage_path)) throw new Error('Este anexo tem um caminho inválido e não pode ser aberto.')
   const { data, error } = await supabase.storage
     .from(ATTACHMENT_BUCKET)
     .createSignedUrl(attachment.storage_path, SIGNED_URL_SECONDS, download ? { download: downloadFileName(attachment.file_name) } : undefined)
@@ -137,21 +147,40 @@ export async function downloadLeadAttachment(attachment: LeadAttachment): Promis
   link.remove()
 }
 
-/** Exclui o anexo (somente ADMIN, pelas políticas do banco). */
+/**
+ * Exclui o anexo (somente ADMIN, pelas políticas do banco). O arquivo sai primeiro: se ele
+ * não puder ser apagado, o registro fica e ninguém consegue registrá-lo de novo.
+ */
 export async function deleteLeadAttachment(attachment: LeadAttachment): Promise<void> {
+  const removed = await supabase.storage.from(ATTACHMENT_BUCKET).remove([attachment.storage_path])
+  if (removed.error) throw new Error(translateStorageError(removed.error, 'Não foi possível excluir o anexo. Tente novamente.'))
   const { data, error } = await supabase.from('lead_attachments').delete().eq('id', attachment.id).select('id')
   if (error) throw new Error('Não foi possível excluir o anexo. Tente novamente.')
   if (!data || data.length === 0) throw new Error('Este anexo não foi excluído: ele já não existe ou apenas o ADMIN pode excluir anexos.')
-  await supabase.storage.from(ATTACHMENT_BUCKET).remove([attachment.storage_path])
 }
 
-/** Caminhos dos arquivos de um lead (para apagar do bucket junto com o lead). */
-export async function fetchLeadAttachmentPaths(leadId: string): Promise<string[]> {
-  const { data, error } = await supabase.from('lead_attachments').select('storage_path').eq('lead_id', leadId)
-  if (error) return []
-  return (data ?? []).map((row) => row.storage_path)
-}
-
-export async function removeAttachmentFiles(paths: string[]): Promise<void> {
-  if (paths.length > 0) await supabase.storage.from(ATTACHMENT_BUCKET).remove(paths)
+/**
+ * Apaga a pasta inteira das propostas excluídas no bucket, inclusive arquivos que nunca
+ * foram registrados (envio que falhou no meio). Depois da exclusão só o ADMIN lê a pasta.
+ * Retorna false quando algum arquivo não pôde ser apagado.
+ */
+export async function removeLeadFolders(leadIds: string[]): Promise<boolean> {
+  const bucket = supabase.storage.from(ATTACHMENT_BUCKET)
+  let complete = true
+  for (const leadId of leadIds) {
+    const paths: string[] = []
+    for (const folder of [leadId, `${leadId}/rental_proposal`, `${leadId}/ab_proposal`]) {
+      const { data, error } = await bucket.list(folder, { limit: 1000 })
+      if (error) {
+        complete = false
+        continue
+      }
+      // Itens sem id são subpastas
+      for (const item of data ?? []) if (item.id) paths.push(`${folder}/${item.name}`)
+    }
+    if (paths.length === 0) continue
+    const { error } = await bucket.remove(paths)
+    if (error) complete = false
+  }
+  return complete
 }

@@ -3,8 +3,9 @@
 -- Rodar no SQL Editor do Supabase.
 --
 -- São identificados pelo domínio @teste.exemplo.com (ou, no lead sem e-mail, pelo
--- telefone fictício (11) 96543-2109), o que permite apagá-los depois sem afetar
--- dados reais (veja o comando no final do arquivo).
+-- telefone fictício (11) 96543-2109) e por não terem responsável (user_id vazio): o que
+-- é gravado pelo SQL Editor não tem usuário logado. Proposta criada no app sempre tem
+-- responsável, então um e-mail de teste colocado nela não faz o script apagá-la.
 -- Rodar de novo substitui os leads de teste anteriores.
 --
 -- As salas, meios de prospecção e motivos de perda são escolhidos entre as
@@ -14,11 +15,11 @@ begin;
 
 create temporary table seed_test_clients on commit drop as
   select distinct client_id from public.leads
-  where (contact_email like '%@teste.exemplo.com' or contact_phone = '(11) 96543-2109') and client_id is not null;
-delete from public.leads where (contact_email like '%@teste.exemplo.com' or contact_phone = '(11) 96543-2109');
+  where (contact_email like '%@teste.exemplo.com' or contact_phone = '(11) 96543-2109') and user_id is null and client_id is not null;
+delete from public.leads where (contact_email like '%@teste.exemplo.com' or contact_phone = '(11) 96543-2109') and user_id is null;
 delete from public.clients c
  where c.id in (select client_id from seed_test_clients)
-   and not exists (select 1 from public.leads l where l.client_id = c.id);
+   and not exists (select 1 from public.leads l where l.client_id = c.id or l.ceremonialist_id = c.id);
 
 with
 rooms as (
@@ -114,28 +115,35 @@ order by s.n;
 
 -- Empresa e evento de vários dias (migração 006): alguns leads de empresas, o resto pessoa física
 update public.leads set company = 'Construtora Alfa', event_end_date = event_date + 2
- where contact_email = 'carlos.lima@teste.exemplo.com';
+ where contact_email = 'carlos.lima@teste.exemplo.com' and user_id is null;
 update public.leads set company = 'Construtora Alfa'
- where contact_email = 'lucas.pereira@teste.exemplo.com';
+ where contact_email = 'lucas.pereira@teste.exemplo.com' and user_id is null;
 update public.leads set company = 'Banco Horizonte', event_end_date = event_date + 1
- where contact_email = 'aline.ribeiro@teste.exemplo.com';
+ where contact_email = 'aline.ribeiro@teste.exemplo.com' and user_id is null;
 update public.leads set company = 'Instituto Vida'
- where contact_email = 'fernanda.alves@teste.exemplo.com';
+ where contact_email = 'fernanda.alves@teste.exemplo.com' and user_id is null;
 
 -- Observações da negociação (migração 007)
 update public.leads set observations = 'Pediu duas opções de cardápio. Retornar até sexta com a proposta revisada.'
- where contact_email = 'carlos.lima@teste.exemplo.com';
+ where contact_email = 'carlos.lima@teste.exemplo.com' and user_id is null;
 update public.leads set observations = 'Decisão depende da aprovação da diretoria na próxima reunião.'
- where contact_email = 'aline.ribeiro@teste.exemplo.com';
+ where contact_email = 'aline.ribeiro@teste.exemplo.com' and user_id is null;
 
 -- Clientes e contatos (migração 009): agrupa de novo agora que as empresas foram definidas
 update public.leads set client_id = null, contact_id = null
- where (contact_email like '%@teste.exemplo.com' or contact_phone = '(11) 96543-2109');
+ where (contact_email like '%@teste.exemplo.com' or contact_phone = '(11) 96543-2109') and user_id is null;
 delete from public.clients c
- where not exists (select 1 from public.leads l where l.client_id = c.id)
+ where c.client_type <> 'ceremonialist'
+   and not exists (select 1 from public.leads l where l.client_id = c.id or l.ceremonialist_id = c.id)
    and exists (
      select 1 from public.client_contacts ct
      where ct.client_id = c.id and (ct.email like '%@teste.exemplo.com' or ct.phone = '(11) 96543-2109')
+   )
+   -- Só cliente em que todos os contatos são de teste
+   and not exists (
+     select 1 from public.client_contacts ct
+     where ct.client_id = c.id
+       and not (coalesce(ct.email, '') like '%@teste.exemplo.com' or coalesce(ct.phone, '') = '(11) 96543-2109')
    );
 select public.backfill_lead_clients();
 
@@ -148,7 +156,8 @@ where (contact_email like '%@teste.exemplo.com' or contact_phone = '(11) 96543-2
 order by created_at;
 
 -- Para apagar os leads de teste depois (e os clientes que ficaram sem proposta):
--- delete from public.leads where (contact_email like '%@teste.exemplo.com' or contact_phone = '(11) 96543-2109');
--- delete from public.clients c where not exists (select 1 from public.leads l where l.client_id = c.id)
+-- delete from public.leads where (contact_email like '%@teste.exemplo.com' or contact_phone = '(11) 96543-2109') and user_id is null;
+-- delete from public.clients c where c.client_type <> 'ceremonialist'
+--   and not exists (select 1 from public.leads l where l.client_id = c.id or l.ceremonialist_id = c.id)
 --   and exists (select 1 from public.client_contacts ct where ct.client_id = c.id
 --               and (ct.email like '%@teste.exemplo.com' or ct.phone = '(11) 96543-2109'));

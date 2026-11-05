@@ -11,23 +11,27 @@
 import type { Session, SupabaseClient, User } from '@supabase/supabase-js'
 import { formatCNPJ, onlyDigits } from './format'
 import { getCorporateEmailDomain } from './clientIdentity'
-import { DEMO_PASSWORD, DEMO_USER_IDS, demoLeads, demoOptions, demoUsers, type DemoLeadSeed } from './demoSeed'
+import { DEMO_PASSWORD, DEMO_USER_IDS, demoCampaigns, demoLeads, demoOptions, demoUsers, type DemoLeadSeed } from './demoSeed'
 import type {
   AppSettingOption,
   Client,
   ClientContact,
   ClientSummary,
+  CommunicationLog,
   Database,
   Lead,
   LeadAttachment,
+  MailingCampaign,
   MarketingSuppression,
   UserProfile,
 } from '../types/lead'
+import { CAMPAIGN_CHANNELS, CAMPAIGN_SEGMENTS, CAMPAIGN_STATUSES, COMMUNICATION_CHANNELS, COMMUNICATION_PURPOSES } from '../types/lead'
 
 export { isDemoMode } from './demoMode'
 export { DEMO_ACCOUNTS, DEMO_PASSWORD } from './demoSeed'
 
-const DB_STORAGE_KEY = 'gestao-leads-demo-db-v1'
+// v2: campanhas, registros de envio e notas da pesquisa
+const DB_STORAGE_KEY = 'gestao-leads-demo-db-v2'
 const FILES_STORAGE_KEY = 'gestao-leads-demo-files-v1'
 const SESSION_STORAGE_KEY = 'gestao-leads-demo-session-v1'
 /** Arquivos maiores que isto ficam só na memória (o sessionStorage tem poucos MB). */
@@ -51,6 +55,8 @@ type DemoDb = {
   marketing_suppressions: MarketingSuppression[]
   lead_attachments: LeadAttachment[]
   user_profiles: UserProfile[]
+  mailing_campaigns: MailingCampaign[]
+  communication_logs: CommunicationLog[]
   users: DemoUser[]
 }
 
@@ -197,6 +203,9 @@ const LEAD_DEFAULTS: Omit<Lead, 'id' | 'created_at' | 'updated_at' | 'contact_na
   nf_parking: null,
   payment_status: 'pendente',
   survey_status: 'nao_enviada',
+  survey_sent_at: null,
+  survey_responded_at: null,
+  survey_score: null,
   user_id: null,
   contact_phone_digits: null,
   cnpj: null,
@@ -539,6 +548,15 @@ function pickLeadColumns(values: Row): Partial<Lead> {
   return picked as Partial<Lead>
 }
 
+/** `sync_survey_dates` e a nota de 1 a 10 (`leads_survey_score_range`). */
+function syncSurveyDates(lead: Lead): void {
+  if (lead.survey_score !== null && (!Number.isInteger(lead.survey_score) || lead.survey_score < 1 || lead.survey_score > 10)) {
+    throw new DemoDbError('23514', 'new row for relation "leads" violates check constraint "leads_survey_score_range"')
+  }
+  if ((lead.survey_status === 'enviada' || lead.survey_status === 'respondida') && !lead.survey_sent_at) lead.survey_sent_at = nowIso()
+  if (lead.survey_status === 'respondida' && !lead.survey_responded_at) lead.survey_responded_at = nowIso()
+}
+
 function insertLead(current: DemoDb, values: Row, userId: string | null, importing = false): Lead {
   const timestamp = nowIso()
   const lead = {
@@ -552,6 +570,7 @@ function insertLead(current: DemoDb, values: Row, userId: string | null, importi
   } as Lead
   computeLeadColumns(lead)
   syncOperationalStatus(lead, null)
+  syncSurveyDates(lead)
   applySuppression(current, lead, null)
   validateLead(lead, current)
   linkLeadClient(current, lead, null, importing)
@@ -570,6 +589,7 @@ function updateLead(current: DemoDb, old: Lead, patch: Row): Lead {
   const lead = { ...clone(old), ...changes } as Lead
   computeLeadColumns(lead)
   syncOperationalStatus(lead, old)
+  syncSurveyDates(lead)
   applySuppression(current, lead, old)
   validateLead(lead, current)
   linkLeadClient(current, lead, old, false)
@@ -653,6 +673,8 @@ function buildSeedRows(): DemoDb {
     })),
     marketing_suppressions: [],
     lead_attachments: [],
+    mailing_campaigns: [],
+    communication_logs: [],
     user_profiles: demoUsers().map((user) => ({
       user_id: user.id,
       email: user.email,
@@ -729,6 +751,8 @@ function buildSeedRows(): DemoDb {
     }
   })
 
+  seedCommunication(current, now, daysAgo)
+
   for (const suppression of current.marketing_suppressions) {
     const source = current.leads.find((lead) => lead.id === suppression.source_lead_id)
     if (source) suppression.created_at = source.updated_at
@@ -746,6 +770,68 @@ function buildSeedRows(): DemoDb {
   for (const contact of current.client_contacts) contact.role = roles[contact.name] ?? contact.role
 
   return current
+}
+
+/** Pesquisas com datas coerentes, campanhas e mensagens iniciadas pelo app nos últimos meses. */
+function seedCommunication(current: DemoDb, now: Date, daysAgo: (days: number, hour?: number) => Date): void {
+  const plusDays = (iso: string, days: number) => {
+    const date = new Date(iso)
+    date.setDate(date.getDate() + days)
+    return new Date(Math.min(date.getTime(), now.getTime() - 60_000)).toISOString()
+  }
+  const log = (lead: Lead, channel: CommunicationLog['channel'], purpose: CommunicationLog['purpose'], at: string) => {
+    const recipient = channel === 'whatsapp' ? onlyDigits(lead.contact_phone ?? '') : lead.contact_email
+    if (!recipient) return
+    current.communication_logs.push({
+      id: newId(),
+      lead_id: lead.id,
+      client_id: lead.client_id,
+      channel,
+      purpose,
+      recipient: channel === 'whatsapp' ? `55${recipient}` : recipient,
+      created_by: lead.user_id,
+      created_at: at,
+    })
+  }
+
+  current.leads.forEach((lead, index) => {
+    // Pesquisa enviada no dia seguinte ao evento e respondida dois dias depois
+    if (lead.survey_status !== 'nao_enviada') {
+      const base = lead.event_last_date ? `${lead.event_last_date}T12:00:00` : lead.updated_at
+      lead.survey_sent_at = plusDays(base, 1)
+      lead.survey_responded_at = lead.survey_status === 'respondida' ? plusDays(lead.survey_sent_at, 2) : null
+      if (!lead.marketing_opt_out) log(lead, 'whatsapp', 'survey', lead.survey_sent_at)
+    }
+    if (lead.marketing_opt_out) return
+    if (lead.proposal_sent) log(lead, 'email', 'proposal', plusDays(lead.created_at, 1))
+    if (lead.status === 'em_aberto') {
+      log(lead, 'whatsapp', 'follow_up', plusDays(lead.created_at, 3 + (index % 4)))
+      if (index % 3 === 0) log(lead, 'whatsapp', 'follow_up', plusDays(lead.created_at, 9))
+    }
+    if (index % 4 === 1) log(lead, 'whatsapp', 'greeting', plusDays(lead.created_at, 20 + (index % 7)))
+  })
+  current.communication_logs.sort((a, b) => a.created_at.localeCompare(b.created_at))
+
+  current.mailing_campaigns = demoCampaigns().map((seed) => {
+    const createdAt = daysAgo(seed.daysAgo + 1, 10).toISOString()
+    return {
+      id: newId(),
+      name: seed.name,
+      channel: seed.channel,
+      segment_filter: seed.segment,
+      status: seed.status,
+      audience_count: seed.audience,
+      sent_count: seed.sent,
+      delivered_count: seed.delivered,
+      opened_count: seed.opened,
+      clicked_count: seed.clicked,
+      sent_at: seed.status === 'rascunho' ? null : daysAgo(seed.daysAgo, 9).toISOString(),
+      notes: seed.notes ?? null,
+      created_by: DEMO_USER_IDS[seed.user],
+      created_at: createdAt,
+      updated_at: daysAgo(Math.max(seed.daysAgo - 3, 0), 16).toISOString(),
+    }
+  })
 }
 
 // =============================================================================
@@ -1173,6 +1259,23 @@ function buildClientSummaries(current: DemoDb): ClientSummary[] {
   })
 }
 
+/** Mesmas regras das constraints de `mailing_campaigns`. */
+function validateCampaign(campaign: MailingCampaign): void {
+  const fail = (constraint: string) => {
+    throw new DemoDbError('23514', `new row for relation "mailing_campaigns" violates check constraint "${constraint}"`)
+  }
+  if (!campaign.name || campaign.name.length > 150 || (campaign.notes?.length ?? 0) > 2000) fail('mailing_campaigns_text_lengths')
+  if (!(CAMPAIGN_CHANNELS as readonly string[]).includes(campaign.channel)) fail('mailing_campaigns_channel_check')
+  if (!(CAMPAIGN_SEGMENTS as readonly string[]).includes(campaign.segment_filter)) fail('mailing_campaigns_segment_check')
+  if (!(CAMPAIGN_STATUSES as readonly string[]).includes(campaign.status)) fail('mailing_campaigns_status_check')
+  const counts = [campaign.audience_count, campaign.sent_count, campaign.delivered_count, campaign.opened_count, campaign.clicked_count]
+  if (counts.some((value) => !Number.isInteger(value) || value < 0)) fail('mailing_campaigns_sent_check')
+  if (campaign.delivered_count > campaign.sent_count) fail('mailing_campaigns_delivered_check')
+  if (campaign.opened_count > campaign.delivered_count) fail('mailing_campaigns_opened_check')
+  if (campaign.clicked_count > campaign.opened_count) fail('mailing_campaigns_clicked_check')
+  if (campaign.status !== 'rascunho' && !campaign.sent_at) campaign.sent_at = nowIso()
+}
+
 function requireAdmin(isAdmin: boolean): void {
   if (!isAdmin) throw new DemoDbError('42501', 'new row violates row-level security policy (admin_required)')
 }
@@ -1357,6 +1460,89 @@ function mutate(
       const targets = current.lead_attachments.filter((item) => matches(item as unknown as Row))
       const ids = new Set(targets.map((item) => item.id))
       current.lead_attachments = current.lead_attachments.filter((item) => !ids.has(item.id))
+      return targets as unknown as Row[]
+    }
+
+    case 'mailing_campaigns': {
+      if (kind === 'insert') {
+        return (operation as { values: Row[] }).values.map((values) => {
+          const timestamp = nowIso()
+          const campaign: MailingCampaign = {
+            channel: 'email',
+            segment_filter: 'all',
+            status: 'rascunho',
+            audience_count: 0,
+            sent_count: 0,
+            delivered_count: 0,
+            opened_count: 0,
+            clicked_count: 0,
+            sent_at: null,
+            notes: null,
+            ...(values as Partial<MailingCampaign>),
+            name: String(values.name ?? '').trim(),
+            id: newId(),
+            created_by: userId,
+            created_at: timestamp,
+            updated_at: timestamp,
+          }
+          validateCampaign(campaign)
+          current.mailing_campaigns.push(campaign)
+          return campaign as unknown as Row
+        })
+      }
+      const targets = current.mailing_campaigns.filter((campaign) => matches(campaign as unknown as Row))
+      if (kind === 'update') {
+        return targets.map((campaign) => {
+          const patch = { ...(operation as { values: Row }).values }
+          delete patch.id
+          delete patch.created_by
+          delete patch.created_at
+          const next = { ...campaign, ...(patch as Partial<MailingCampaign>), updated_at: nowIso() }
+          if (typeof next.name === 'string') next.name = next.name.trim()
+          validateCampaign(next)
+          Object.assign(campaign, next)
+          return campaign as unknown as Row
+        })
+      }
+      if (!isAdmin) return []
+      const ids = new Set(targets.map((campaign) => campaign.id))
+      current.mailing_campaigns = current.mailing_campaigns.filter((campaign) => !ids.has(campaign.id))
+      return targets as unknown as Row[]
+    }
+
+    case 'communication_logs': {
+      if (kind === 'insert') {
+        return (operation as { values: Row[] }).values.map((values) => {
+          const entry: CommunicationLog = {
+            lead_id: null,
+            client_id: null,
+            recipient: null,
+            ...(values as Partial<CommunicationLog>),
+            channel: values.channel as CommunicationLog['channel'],
+            purpose: values.purpose as CommunicationLog['purpose'],
+            id: newId(),
+            created_by: userId,
+            created_at: nowIso(),
+          }
+          if (!(COMMUNICATION_CHANNELS as readonly string[]).includes(entry.channel) || !(COMMUNICATION_PURPOSES as readonly string[]).includes(entry.purpose)) {
+            throw new DemoDbError('23514', 'new row for relation "communication_logs" violates check constraint')
+          }
+          current.communication_logs.push(entry)
+          return entry as unknown as Row
+        })
+      }
+      const targets = current.communication_logs.filter((entry) => matches(entry as unknown as Row))
+      if (kind === 'update') {
+        const patch = { ...(operation as { values: Row }).values }
+        delete patch.id
+        delete patch.created_by
+        delete patch.created_at
+        for (const entry of targets) Object.assign(entry, patch)
+        return targets as unknown as Row[]
+      }
+      if (!isAdmin) return []
+      const ids = new Set(targets.map((entry) => entry.id))
+      current.communication_logs = current.communication_logs.filter((entry) => !ids.has(entry.id))
       return targets as unknown as Row[]
     }
 
@@ -1633,6 +1819,22 @@ function storageBucket(bucket: string) {
       const file = findFile(bucket, path)
       if (!file) return { data: null, error: storageError('Object not found', '404') }
       return { data: { signedUrl: file.url }, error: null }
+    },
+
+    async list(prefix = '', options?: { limit?: number }) {
+      await delay()
+      const error = check()
+      if (error) return { data: null, error }
+      const folder = prefix.replace(/\/+$/, '')
+      const start = folder ? `${bucket}/${folder}/` : `${bucket}/`
+      const names = new Set<string>()
+      for (const key of [...memoryFiles.keys(), ...Object.keys(readPersistedFiles())]) {
+        if (!key.startsWith(start)) continue
+        const rest = key.slice(start.length)
+        if (rest && !rest.includes('/')) names.add(rest)
+      }
+      const data = [...names].slice(0, options?.limit ?? 100).map((name) => ({ name, id: `${start}${name}` }))
+      return { data, error: null }
     },
 
     async remove(paths: string[]) {

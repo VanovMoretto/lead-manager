@@ -57,7 +57,7 @@ import {
 import { isSameContactName } from '../lib/clientIdentity'
 import { useCompanyOptions, type CompanyOption } from '../hooks/useCompanies'
 import CompanyAutocomplete from './CompanyAutocomplete'
-import { fetchLeadAttachmentPaths, removeAttachmentFiles } from '../lib/leadAttachments'
+import { removeLeadFolders } from '../lib/leadAttachments'
 import { RateLimitError, guardMutation } from '../lib/rateLimit'
 import {
   CEREMONIALIST_ORIGIN,
@@ -1065,8 +1065,6 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
 
     setDeleting(true)
     setSubmitError(null)
-    // Os arquivos anexados saem do bucket junto com o lead
-    const attachmentPaths = await fetchLeadAttachmentPaths(lead.id)
     // .select() devolve as linhas apagadas: lista vazia = nada foi excluído (lead inexistente ou sem permissão)
     const { data, error } = await supabase.from('leads').delete().eq('id', lead.id).select('id')
     setDeleting(false)
@@ -1084,7 +1082,8 @@ function LeadForm({ lead, onCancel, onSaved, onDeleted, onRequestReset, onStateC
       return
     }
 
-    await removeAttachmentFiles(attachmentPaths)
+    // Os arquivos anexados saem do bucket junto com a proposta
+    await removeLeadFolders([lead.id])
     onDeleted?.(lead)
     onCancel()
   }

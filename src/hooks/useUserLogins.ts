@@ -16,6 +16,11 @@ function loadLogins(): Promise<UserLogin[]> {
   return cache
 }
 
+/** Esquece a lista ao sair: o próximo usuário da aba busca a dele. */
+export function clearUserLoginsCache(): void {
+  cache = null
+}
+
 /** Login de cada usuário (e-mail sem o domínio), para a coluna Responsável. Falha silenciosa: mostra "—". */
 export function useUserLogins() {
   const [logins, setLogins] = useState<UserLogin[]>([])

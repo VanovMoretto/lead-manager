@@ -38,7 +38,7 @@ import StatusBadge from '../components/StatusBadge'
 import WhatsAppButton from '../components/WhatsAppButton'
 import { useAuth } from '../contexts/AuthContext'
 import { useConfirm } from '../hooks/useConfirm'
-import { formatBRL } from '../lib/format'
+import { formatBRL, isValidEmail } from '../lib/format'
 import { NET_RATES, NET_RATES_LABEL, formatLeadEventPeriod, getLeadRooms, getLeadValues, hasAnyValue } from '../lib/leadFields'
 import {
   ATTACHMENT_ACCEPT,
@@ -900,13 +900,13 @@ export default function LeadDetails() {
               <dl className="space-y-3">
                 <InfoRow label="Telefone / WhatsApp">{lead.contact_phone || empty}</InfoRow>
                 <InfoRow label="E-mail">
-                  {lead.contact_email ? (
-                    <a href={`mailto:${lead.contact_email}`} className="inline-flex items-center gap-1 text-brand-700 hover:underline dark:text-brand-300">
+                  {lead.contact_email && isValidEmail(lead.contact_email) ? (
+                    <a href={`mailto:${lead.contact_email.trim()}`} className="inline-flex items-center gap-1 text-brand-700 hover:underline dark:text-brand-300">
                       <Mail className="h-3.5 w-3.5" aria-hidden="true" />
                       {lead.contact_email}
                     </a>
                   ) : (
-                    empty
+                    lead.contact_email || empty
                   )}
                 </InfoRow>
                 <InfoRow label="Empresa">{lead.company || 'Pessoa física'}</InfoRow>

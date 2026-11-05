@@ -1,6 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { Session, User } from '@supabase/supabase-js'
-import { isRecoverySession, setRememberSession, supabase } from '../lib/supabase'
+import { getRememberSession, isRecoverySession, setRememberSession, supabase } from '../lib/supabase'
+import { clearAvatarUrlCache } from '../hooks/useAvatarUrl'
+import { clearUserLoginsCache } from '../hooks/useUserLogins'
 import { toLoginEmail, translateAuthError } from '../lib/authHelpers'
 import { recoveryClient, resetPasswordUrl } from '../lib/passwordRecovery'
 import type { UserProfile } from '../types/lead'
@@ -74,6 +76,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (event === 'SIGNED_OUT') {
         // O próximo login consulta o perfil de novo (pode ter sido desativado nesse meio-tempo)
         setProfileState(null)
+        // Dados de outros usuários guardados em memória não passam para o próximo login da aba
+        clearUserLoginsCache()
+        clearAvatarUrlCache()
       }
       setSession(acceptSession(nextSession))
       setLoading(false)
@@ -127,6 +132,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signIn = useCallback(
     async (identifier: string, password: string, options?: { remember?: boolean; captchaToken?: string }): Promise<ActionResult> => {
+      const previousRemember = getRememberSession()
       setRememberSession(options?.remember ?? true)
       setAccessNotice(null)
       const { error } = await supabase.auth.signInWithPassword({
@@ -134,6 +140,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         password,
         options: options?.captchaToken ? { captchaToken: options.captchaToken } : undefined,
       })
+      // Tentativa que falhou não muda a escolha das sessões já abertas em outras abas
+      if (error) setRememberSession(previousRemember)
       return { error: error ? translateAuthError(error, 'Não foi possível entrar. Tente novamente.') : null }
     },
     [],
@@ -174,7 +182,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       }
 
-      const { error } = await supabase.auth.updateUser({ password: newPassword })
+      // A senha atual vai junto: com "Require current password" ligado no Supabase Auth, o servidor também confere
+      const { error } = await supabase.auth.updateUser({ password: newPassword, current_password: currentPassword })
       return { error: error ? translateAuthError(error, 'Não foi possível alterar a senha. Tente novamente.') : null }
     },
     [userEmail],

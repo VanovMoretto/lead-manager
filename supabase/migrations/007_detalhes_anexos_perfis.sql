@@ -148,6 +148,11 @@ begin
     return;
   end if;
 
+  -- Só define os ADMINs iniciais; depois disso quem decide é o Painel Admin
+  if exists (select 1 from public.user_profiles p where p.is_admin) then
+    return;
+  end if;
+
   -- Coluna com o id do usuário do Supabase Auth
   select c.column_name into v_id_col
   from information_schema.columns c

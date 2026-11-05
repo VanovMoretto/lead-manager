@@ -121,6 +121,7 @@ function ContactCell({ client }: { client: ClientSummary }) {
         <span className="truncate">{[client.primary_contact_phone, client.primary_contact_email].filter(Boolean).join(' · ') || 'Sem telefone ou e-mail'}</span>
         <WhatsAppButton
           greeting
+          clientId={client.id}
           lead={{
             contact_name: client.primary_contact_name,
             contact_phone: client.primary_contact_phone,

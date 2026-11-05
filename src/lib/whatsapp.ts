@@ -10,9 +10,11 @@ export function toWhatsAppNumber(phone: string | null | undefined): string | nul
   return null
 }
 
-/** "NOME sobrenome" -> "Nome" */
+const TITLES = /^(dr|dra|sr|sra|srta|prof|profa)\.?$/i
+
+/** "NOME sobrenome" -> "Nome"; "Dra. Renata Vilela" -> "Renata" */
 function firstName(fullName: string): string {
-  const first = fullName.trim().split(/\s+/)[0] ?? ''
+  const first = fullName.trim().split(/\s+/).find((word) => !TITLES.test(word)) ?? ''
   return first ? first.charAt(0).toLocaleUpperCase('pt-BR') + first.slice(1).toLocaleLowerCase('pt-BR') : ''
 }
 
@@ -38,6 +40,27 @@ export function buildFollowUpWhatsAppUrl(
   const number = toWhatsAppNumber(lead.contact_phone)
   if (!number) return null
   return `https://wa.me/${number}?text=${encodeURIComponent(buildFollowUpMessage(lead))}`
+}
+
+/** Mensagem pós-evento pedindo a avaliação do cliente (pesquisa de satisfação). */
+export function buildSurveyMessage(lead: Pick<Lead, 'contact_name'> & Partial<Pick<Lead, 'event_name'>>): string {
+  const name = firstName(lead.contact_name)
+  const greeting = name ? `Olá ${name}, tudo bem?` : 'Olá, tudo bem?'
+  const event = lead.event_name?.trim() ? `o evento ${lead.event_name.trim()}` : 'o seu evento'
+  return (
+    `${greeting} Muito obrigado por realizar ${event} conosco! ` +
+    'Gostaríamos muito de ouvir sua avaliação rápida sobre o espaço e nosso atendimento para continuarmos melhorando. ' +
+    'Numa escala de 1 a 10, que nota você daria para a sua experiência? Se quiser, conte também o que podemos melhorar.'
+  )
+}
+
+/** Link do WhatsApp com a pesquisa de satisfação pós-evento, ou null sem telefone válido. */
+export function buildSurveyWhatsAppUrl(
+  lead: Pick<Lead, 'contact_name' | 'contact_phone'> & Partial<Pick<Lead, 'event_name'>>,
+): string | null {
+  const number = toWhatsAppNumber(lead.contact_phone)
+  if (!number) return null
+  return `https://wa.me/${number}?text=${encodeURIComponent(buildSurveyMessage(lead))}`
 }
 
 /** Link do WhatsApp com uma saudação simples ao contato, ou null sem telefone válido. */

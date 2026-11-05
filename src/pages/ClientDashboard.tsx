@@ -42,9 +42,9 @@ import { useUserLogins } from '../hooks/useUserLogins'
 import type { RecurringClientMatch } from '../hooks/useRecurringClient'
 import { normalizeEmail, normalizePhoneDigits } from '../lib/contactIdentity'
 import { isProposalSent, toLocalISODate } from '../lib/dashboard'
-import { formatBRL, formatCNPJ, formatDateBR, isValidCNPJ, onlyDigits } from '../lib/format'
+import { formatBRL, formatCNPJ, formatDateBR, isValidCNPJ, isValidEmail, onlyDigits } from '../lib/format'
 import { formatLeadEventPeriod, getLeadRooms, getLeadValues, hasAnyValue } from '../lib/leadFields'
-import { removeAttachmentFiles } from '../lib/leadAttachments'
+import { removeLeadFolders } from '../lib/leadAttachments'
 import { RateLimitError, guardMutation } from '../lib/rateLimit'
 import { supabase } from '../lib/supabase'
 import { cn, isRowClick } from '../lib/utils'
@@ -613,13 +613,12 @@ function DeleteClientModal({
     setError(null)
     try {
       if (withProposals && leadIds.length > 0) {
-        const { data: files } = await supabase.from('lead_attachments').select('storage_path').in('lead_id', leadIds)
         const { data: removed, error: leadsError } = await supabase.from('leads').delete().in('id', leadIds).select('id')
         if (leadsError || (removed?.length ?? 0) === 0) {
           setError('Não foi possível excluir as propostas deste cliente. Apenas o ADMIN pode excluir.')
           return
         }
-        await removeAttachmentFiles((files ?? []).map((file) => file.storage_path))
+        await removeLeadFolders((removed ?? []).map((row) => row.id))
       }
       // .select() confirma a exclusão: a política do banco pode recusar em silêncio
       const { data, error: dbError } = await supabase.from('clients').delete().eq('id', client.id).select('id')
@@ -794,11 +793,12 @@ function ContactCard({
           <span>{contact.phone || 'Sem telefone'}</span>
           <WhatsAppButton
             greeting
+            clientId={contact.client_id}
             lead={{ contact_name: contact.name, contact_phone: contact.phone, room_interests: [], room_interest: null, marketing_opt_out: optedOut }}
           />
         </div>
-        {contact.email ? (
-          <a href={`mailto:${contact.email}`} className="inline-flex max-w-full items-center gap-1 text-brand-700 hover:underline dark:text-brand-300">
+        {contact.email && isValidEmail(contact.email) ? (
+          <a href={`mailto:${contact.email.trim()}`} className="inline-flex max-w-full items-center gap-1 text-brand-700 hover:underline dark:text-brand-300">
             <Mail className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
             <span className="truncate">{contact.email}</span>
           </a>

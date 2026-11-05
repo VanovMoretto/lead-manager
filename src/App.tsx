@@ -24,6 +24,7 @@ const LeadDetails = lazy(() => import('./pages/LeadDetails'))
 const ClientList = lazy(() => import('./pages/ClientList'))
 const ClientDashboard = lazy(() => import('./pages/ClientDashboard'))
 const RevenueMap = lazy(() => import('./pages/RevenueMap'))
+const MailingHub = lazy(() => import('./pages/MailingHub'))
 const Profile = lazy(() => import('./pages/Profile'))
 
 function PageLoader() {
@@ -123,6 +124,14 @@ export default function App() {
                     element={
                       <Suspense fallback={<PageLoader />}>
                         <RevenueMap />
+                      </Suspense>
+                    }
+                  />
+                  <Route
+                    path="mailing"
+                    element={
+                      <Suspense fallback={<PageLoader />}>
+                        <MailingHub />
                       </Suspense>
                     }
                   />

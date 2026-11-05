@@ -9,6 +9,7 @@ import {
   LogOut,
   Menu,
   Plus,
+  MailCheck,
   Receipt,
   Settings,
   X,
@@ -52,6 +53,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: '/propostas', label: 'Consultar Propostas', icon: FileText },
   { to: '/leads', label: 'Consultar Leads', icon: Building2 },
   { to: '/faturamento', label: 'Faturamento & Eventos', icon: Receipt },
+  { to: '/mailing', label: 'Mailing & Pesquisas', icon: MailCheck },
   { to: '/admin', label: 'Painel Admin', icon: Settings, adminOnly: true },
 ]
 
