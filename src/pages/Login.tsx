@@ -193,22 +193,22 @@ export default function Login() {
   return (
     <div className="flex min-h-screen bg-white dark:bg-slate-900">
       {/* Painel da marca (desktop) */}
-      <section className="hidden w-[44%] max-w-[640px] flex-col justify-between bg-rail p-12 text-white lg:flex">
-        <AppLogo size="lg" variant="onDark" showTagline />
+      <section className="hidden min-w-0 flex-1 flex-col justify-between bg-rail px-14 py-12 text-white lg:flex xl:px-20 xl:py-16">
+        <AppLogo size="xl" variant="onDark" showTagline />
 
-        <div className="max-w-md">
-          <h1 className="text-[2.5rem] font-semibold leading-[1.15] tracking-[-0.02em]">
+        <div className="max-w-xl">
+          <h1 className="text-[2.75rem] font-semibold leading-[1.1] tracking-[-0.025em] xl:text-[3.25rem]">
             Cada evento começa com um bom atendimento.
           </h1>
-          <p className="mt-4 text-base leading-relaxed text-rail-muted">
+          <p className="mt-5 max-w-lg text-lg leading-relaxed text-rail-muted">
             Solicitações, propostas, fechamentos e faturamento no mesmo lugar, com a receita líquida de cada evento
             calculada para você.
           </p>
 
-          <ol className="mt-10 flex flex-wrap items-center gap-y-2 text-xs font-medium text-rail-muted" aria-label="Etapas acompanhadas no Verto">
+          <ol className="mt-12 flex flex-wrap items-center gap-y-2 text-sm font-medium text-rail-muted" aria-label="Etapas acompanhadas no Verto">
             {JOURNEY.map((step, index) => (
               <li key={step} className="flex items-center whitespace-nowrap">
-                {index > 0 && <span className="mx-2 h-px w-5 bg-rail-line" aria-hidden="true" />}
+                {index > 0 && <span className="mx-3 h-px w-6 bg-rail-line" aria-hidden="true" />}
                 <span className={index === JOURNEY.length - 1 ? 'text-white' : undefined}>{step}</span>
               </li>
             ))}
@@ -219,7 +219,7 @@ export default function Login() {
       </section>
 
       {/* Formulário */}
-      <section className="relative flex w-full flex-1 items-center justify-center bg-canvas px-4 py-12 sm:px-8 dark:bg-slate-950">
+      <section className="relative flex w-full flex-1 items-center justify-center bg-canvas px-4 py-12 sm:px-8 lg:w-[520px] lg:flex-none lg:px-12 xl:w-[580px] dark:bg-slate-950">
         <div className="absolute right-4 top-4">
           <ThemeToggle />
         </div>

@@ -1,6 +1,6 @@
 import { cn } from '../lib/utils'
 
-type AppLogoSize = 'sm' | 'md' | 'lg'
+type AppLogoSize = 'sm' | 'md' | 'lg' | 'xl'
 type AppLogoVariant = 'default' | 'onDark'
 
 type AppLogoProps = {
@@ -17,6 +17,7 @@ const SIZES: Record<AppLogoSize, { mark: string; gap: string; title: string; tag
   sm: { mark: 'h-7 w-7', gap: 'gap-2', title: 'text-base', tagline: 'text-[11px]' },
   md: { mark: 'h-8 w-8', gap: 'gap-2.5', title: 'text-lg', tagline: 'text-xs' },
   lg: { mark: 'h-10 w-10', gap: 'gap-3', title: 'text-2xl', tagline: 'text-sm' },
+  xl: { mark: 'h-14 w-14', gap: 'gap-4', title: 'text-[2.5rem]', tagline: 'text-base' },
 }
 
 export const APP_NAME = 'Verto'
