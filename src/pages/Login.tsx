@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useRef, useState, type FormEvent } from 'rea
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { CircleAlert, CircleCheck, Eye, EyeOff, LoaderCircle, Lock, ShieldAlert, User } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
-import AppLogo from '../components/AppLogo'
+import AppLogo, { APP_NAME, APP_TAGLINE, LogoMark } from '../components/AppLogo'
 import ThemeToggle from '../components/ThemeToggle'
 import Turnstile, { type TurnstileHandle } from '../components/Turnstile'
 import { TURNSTILE_SITE_KEY } from '../lib/turnstile'
@@ -194,7 +194,13 @@ export default function Login() {
     <div className="flex min-h-screen bg-white dark:bg-slate-900">
       {/* Painel da marca (desktop) */}
       <section className="hidden w-[40%] shrink-0 flex-col justify-between bg-rail px-12 py-12 text-white lg:flex xl:px-16 xl:py-14">
-        <AppLogo size="xl" variant="onDark" showTagline />
+        <div className="pt-[8vh]">
+          <div className="flex items-end gap-4 xl:gap-5">
+            <LogoMark className="h-24 w-24 shrink-0 xl:h-[7.5rem] xl:w-[7.5rem]" />
+            <p className="-mb-1.5 text-[3.5rem] font-semibold leading-none tracking-[-0.02em] xl:text-[4.25rem]">{APP_NAME}</p>
+          </div>
+          <p className="mt-5 pl-2 text-base text-rail-muted xl:text-lg">{APP_TAGLINE}</p>
+        </div>
 
         <div className="max-w-xl">
           <h1 className="max-w-lg text-[2.25rem] font-semibold leading-[1.15] tracking-[-0.02em] xl:text-[2.625rem]">
@@ -219,7 +225,7 @@ export default function Login() {
       </section>
 
       {/* Formulário */}
-      <section className="relative flex w-full flex-1 items-center justify-center bg-canvas px-4 py-12 sm:px-8 lg:justify-end lg:pl-12 lg:pr-[17%] dark:bg-slate-950">
+      <section className="relative flex w-full flex-1 items-center justify-center bg-canvas px-4 py-12 sm:px-8 lg:px-12 dark:bg-slate-950">
         <div className="absolute right-4 top-4">
           <ThemeToggle />
         </div>
