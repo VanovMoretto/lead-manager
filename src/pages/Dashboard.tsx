@@ -6,6 +6,8 @@ import {
   CartesianGrid,
   Cell,
   LabelList,
+  Pie,
+  PieChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -38,7 +40,15 @@ import { CHART_THEMES, type ChartTheme } from '../lib/chartTheme'
 import { supabase } from '../lib/supabase'
 import { cn, isRowClick } from '../lib/utils'
 import { formatBRL, formatDateBR } from '../lib/format'
-import { countEventDays, getLeadRooms, getLeadValues, hasAnyValue, type LeadValueBreakdown } from '../lib/leadFields'
+import {
+  NET_RATES,
+  NET_RATES_LABEL,
+  countEventDays,
+  getLeadRooms,
+  getLeadValues,
+  hasAnyValue,
+  type LeadValueBreakdown,
+} from '../lib/leadFields'
 import {
   DASHBOARD_LEAD_COLUMNS,
   MONTHLY_LEAD_COLUMNS,
@@ -54,6 +64,7 @@ import {
   monthWindow,
   monthsToRange,
   proposalMonth,
+  relativeChange,
   computeTrend,
   countBy,
   countRooms,
@@ -61,9 +72,11 @@ import {
   formatRangeLabel,
   getGranularity,
   getPresetRange,
+  getPreviousRange,
   isProposalSent,
   rangeToTimestampBounds,
   toLocalISODate,
+  type DashboardKpis,
   type DashboardLead,
   type DateRange,
   type Granularity,
@@ -376,6 +389,189 @@ function SplitBar({ sent, inquiries }: { sent: number; inquiries: number }) {
         </span>
       </div>
     </div>
+  )
+}
+
+// -----------------------------------------------------------------------------
+// Topo: resultado do período
+// -----------------------------------------------------------------------------
+
+/** Variação contra o período anterior, em texto (a cor reforça, nunca fala sozinha). */
+function Delta({ current, previous, label, loading }: { current: number; previous: number | null; label: string; loading: boolean }) {
+  if (loading || previous === null) return <span className="text-xs text-slate-400 dark:text-slate-500">Comparando com {label}...</span>
+  const change = relativeChange(current, previous)
+  if (change === null) {
+    return <span className="text-xs text-slate-500 dark:text-slate-400">Sem base em {label} para comparar</span>
+  }
+  const up = change >= 0
+  const Icon = up ? TrendingUp : TrendingDown
+  return (
+    <span className="inline-flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400">
+      <Icon className={cn('h-3.5 w-3.5', up ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400')} aria-hidden="true" />
+      <strong className={cn('font-semibold', up ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400')}>
+        {up ? '+' : ''}
+        {decimalFormatter.format(change * 100)}%
+      </strong>
+      vs. {label}
+    </span>
+  )
+}
+
+function SummaryStat({ label, value, title, children }: { label: string; value: string; title?: string; children?: ReactNode }) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-sm text-slate-500 dark:text-slate-400">{label}</dt>
+      <dd className="mt-1 text-xl font-semibold tabular-nums text-slate-900 dark:text-white" title={title}>
+        {value}
+      </dd>
+      {children && <dd className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{children}</dd>}
+    </div>
+  )
+}
+
+function FunnelStep({
+  label,
+  value,
+  base,
+  detail,
+  tone,
+}: {
+  label: string
+  value: number
+  base: number
+  detail?: string
+  tone: 'brand' | 'closed'
+}) {
+  const width = base > 0 ? Math.max((value / base) * 100, value > 0 ? 2 : 0) : 0
+  return (
+    <div>
+      <div className="flex items-baseline justify-between gap-3 text-sm">
+        <span className="text-slate-700 dark:text-slate-200">{label}</span>
+        <span className="tabular-nums">
+          <strong className="font-semibold text-slate-900 dark:text-white">{formatInteger(value)}</strong>
+          {detail && <span className="ml-1.5 text-xs text-slate-500 dark:text-slate-400">{detail}</span>}
+        </span>
+      </div>
+      <div className="mt-1.5 h-2.5 rounded-sm bg-slate-100 dark:bg-slate-800" aria-hidden="true">
+        <div
+          className={cn('h-full rounded-sm', tone === 'closed' ? 'bg-emerald-600 dark:bg-emerald-500' : 'bg-brand-600 dark:bg-brand-500')}
+          style={{ width: `${width}%` }}
+        />
+      </div>
+    </div>
+  )
+}
+
+function PeriodSummary({
+  kpis,
+  previous,
+  previousLabel,
+  loading,
+  previousLoading,
+}: {
+  kpis: DashboardKpis
+  previous: DashboardKpis | null
+  previousLabel: string
+  loading: boolean
+  previousLoading: boolean
+}) {
+  return (
+    <section
+      className={cn(cardClassName, 'grid grid-cols-1 overflow-hidden lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]')}
+      aria-label="Resultado do período"
+    >
+      <div className="p-6">
+        <h2 className="text-sm font-medium text-slate-600 dark:text-slate-300">Locação de sala fechada</h2>
+        {loading ? (
+          <div className="mt-2 space-y-2">
+            <Skeleton className="h-11 w-56" />
+            <Skeleton className="h-4 w-40" />
+          </div>
+        ) : (
+          <>
+            <p
+              className="mt-1 text-[2.75rem] font-semibold leading-tight tracking-[-0.02em] tabular-nums text-brand-900 dark:text-white"
+              title={formatBRL(kpis.closedBreakdown.rental)}
+            >
+              {formatBRL(kpis.closedBreakdown.rental)}
+            </p>
+            <Delta
+              current={kpis.closedBreakdown.rental}
+              previous={previous ? previous.closedBreakdown.rental : null}
+              label={previousLabel}
+              loading={previousLoading}
+            />
+          </>
+        )}
+
+        <dl className="mt-6 grid grid-cols-1 gap-5 border-t border-slate-100 pt-5 sm:grid-cols-3 dark:border-slate-800">
+          {loading ? (
+            Array.from({ length: 3 }, (_, index) => <Skeleton key={index} className="h-12 w-full" />)
+          ) : (
+            <>
+              <SummaryStat
+                label="Receita líquida fechada"
+                value={formatCurrencyCompact(kpis.closedBreakdown.net)}
+                title={formatBRL(kpis.closedBreakdown.net)}
+              >
+                {NET_RATES_LABEL}
+              </SummaryStat>
+              <SummaryStat label="Receita bruta fechada" value={formatCurrencyCompact(kpis.closedValue)} title={formatBRL(kpis.closedValue)}>
+                Todos os serviços
+              </SummaryStat>
+              <SummaryStat
+                label="Em negociação"
+                value={formatCurrencyCompact(kpis.openBreakdown.rental)}
+                title={formatBRL(kpis.openBreakdown.rental)}
+              >
+                Locação de {formatInteger(kpis.open)} {kpis.open === 1 ? 'proposta' : 'propostas'} · bruta{' '}
+                {formatCurrencyCompact(kpis.openBreakdown.total)}
+              </SummaryStat>
+            </>
+          )}
+        </dl>
+      </div>
+
+      <div className="border-t border-slate-200 bg-slate-50/70 p-6 lg:border-l lg:border-t-0 dark:border-slate-800 dark:bg-slate-950/30">
+        <div className="flex items-baseline justify-between gap-3">
+          <h2 className="text-sm font-medium text-slate-600 dark:text-slate-300">Funil do período</h2>
+          {!loading && (
+            <span className="text-sm text-slate-500 dark:text-slate-400">
+              Conversão <strong className="font-semibold text-slate-900 dark:text-white">{formatPercent(kpis.conversionRate)}</strong>
+            </span>
+          )}
+        </div>
+        {loading ? (
+          <div className="mt-4 space-y-4">
+            {Array.from({ length: 3 }, (_, index) => (
+              <Skeleton key={index} className="h-9 w-full" />
+            ))}
+          </div>
+        ) : (
+          <div className="mt-4 space-y-4">
+            <FunnelStep label="Solicitações recebidas" value={kpis.total} base={kpis.total} tone="brand" />
+            <FunnelStep
+              label="Propostas enviadas"
+              value={kpis.proposalsSent}
+              base={kpis.total}
+              detail={formatPercent(kpis.total > 0 ? kpis.proposalsSent / kpis.total : 0)}
+              tone="brand"
+            />
+            <FunnelStep
+              label="Fechadas"
+              value={kpis.closed}
+              base={kpis.total}
+              detail={`${formatPercent(kpis.proposalConversionRate)} das enviadas`}
+              tone="closed"
+            />
+            <p className="border-t border-slate-200 pt-3 text-sm text-slate-500 dark:border-slate-800 dark:text-slate-400">
+              <strong className="font-semibold text-slate-900 dark:text-white">{formatInteger(kpis.open)}</strong> em aberto ·{' '}
+              <strong className="font-semibold text-slate-900 dark:text-white">{formatInteger(kpis.lost)}</strong> perdidas
+            </p>
+          </div>
+        )}
+      </div>
+    </section>
   )
 }
 
@@ -808,42 +1004,92 @@ const DISTRIBUTION_OPTIONS: SegmentedOption<DistributionDimension>[] = [
 /** 6 categorias + "Outros". */
 const MAX_DISTRIBUTION_ROWS = 7
 
-/** Ranking em barras horizontais: uma cor só, "Outros" e "Não informado" em cinza. */
-function DistributionBars({ data, theme, requests }: { data: RankItem[]; theme: ChartTheme; requests: number }) {
-  const max = Math.max(...data.map((item) => item.count), 1)
+type PieSlice = { label: string; value: number; fill: string; hint?: string }
+
+/** Gráfico de rosca com a legenda ao lado: cada fatia com o valor e a participação escritos. */
+function PieWithLegend({
+  slices,
+  formatValue,
+  ariaLabel,
+  theme,
+}: {
+  slices: PieSlice[]
+  formatValue: (value: number) => string
+  ariaLabel: string
+  theme: ChartTheme
+}) {
+  const total = slices.reduce((sum, slice) => sum + slice.value, 0)
+  const visible = slices.filter((slice) => slice.value > 0)
 
   return (
-    <div>
-      <p className="mb-3 text-sm text-slate-500 dark:text-slate-400">
-        <span className="font-semibold tabular-nums text-slate-900 dark:text-white">{formatInteger(requests)}</span> solicitações no
-        período
-      </p>
-      <ul className="space-y-3">
-        {data.map((item) => {
-          const neutral = item.label === OTHERS_LABEL || item.label === NOT_INFORMED_LABEL
-          return (
-            <li key={item.label} className="text-sm">
-              <div className="flex items-baseline justify-between gap-3">
-                <span className="truncate text-slate-700 dark:text-slate-200" title={item.label}>
-                  {item.label}
-                </span>
-                <span className="shrink-0 tabular-nums">
-                  <span className="font-semibold text-slate-900 dark:text-white">{formatInteger(item.count)}</span>
-                  <span className="ml-1.5 text-slate-500 dark:text-slate-400">{formatPercent(item.share)}</span>
-                </span>
-              </div>
-              <div className="mt-1.5 h-2 rounded-sm bg-slate-100 dark:bg-slate-800" aria-hidden="true">
-                <div
-                  className="h-full rounded-sm"
-                  style={{ width: `${(item.count / max) * 100}%`, backgroundColor: neutral ? theme.neutral : theme.series[0] }}
+    <div className="flex flex-col items-center gap-5 sm:flex-row sm:items-center">
+      <div className="h-44 w-44 shrink-0" role="img" aria-label={ariaLabel}>
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart>
+            <Pie
+              data={visible}
+              dataKey="value"
+              nameKey="label"
+              innerRadius="64%"
+              outerRadius="100%"
+              paddingAngle={visible.length > 1 ? 1.5 : 0}
+              stroke={theme.surface}
+              strokeWidth={2}
+              startAngle={90}
+              endAngle={-270}
+              isAnimationActive={false}
+            />
+            <Tooltip
+              content={
+                <ChartTooltip
+                  formatValue={(entry) => {
+                    const value = Number(entry.value ?? 0)
+                    return `${formatValue(value)} (${formatPercent(total > 0 ? value / total : 0)})`
+                  }}
                 />
-              </div>
-            </li>
-          )
-        })}
+              }
+            />
+          </PieChart>
+        </ResponsiveContainer>
+      </div>
+
+      <ul className="w-full min-w-0 space-y-2">
+        {slices.map((slice) => (
+          <li key={slice.label} className="flex items-start justify-between gap-3 text-sm">
+            <span className="flex min-w-0 items-start gap-2">
+              <span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-sm" style={{ backgroundColor: slice.fill }} aria-hidden="true" />
+              <span className="min-w-0">
+                <span className="block truncate text-slate-700 dark:text-slate-200" title={slice.label}>
+                  {slice.label}
+                </span>
+                {slice.hint && <span className="block text-xs text-slate-500 dark:text-slate-400">{slice.hint}</span>}
+              </span>
+            </span>
+            <span className="shrink-0 text-right tabular-nums">
+              <span className="font-semibold text-slate-900 dark:text-white" title={formatValue(slice.value)}>
+                {formatValue(slice.value)}
+              </span>
+              <span className="ml-1.5 text-slate-500 dark:text-slate-400">
+                {formatPercent(total > 0 ? slice.value / total : 0)}
+              </span>
+            </span>
+          </li>
+        ))}
       </ul>
     </div>
   )
+}
+
+function DistributionPie({ data, theme }: { data: RankItem[]; theme: ChartTheme }) {
+  const slices = data.map((item, index) => ({
+    label: item.label,
+    value: item.count,
+    fill:
+      item.label === OTHERS_LABEL || item.label === NOT_INFORMED_LABEL
+        ? theme.neutral
+        : theme.series[index % theme.series.length],
+  }))
+  return <PieWithLegend slices={slices} formatValue={formatInteger} ariaLabel="Distribuição das solicitações" theme={theme} />
 }
 
 // -----------------------------------------------------------------------------
@@ -870,73 +1116,59 @@ function valueBreakdownTitle(values: LeadValueBreakdown): string {
  * Receitas além da locação. Não são categorias com identidade própria nos gráficos,
  * então usam tons da cor da marca + rótulo escrito (a cor nunca fala sozinha).
  */
-const EXTRA_COMPONENTS: Array<{ key: 'ab' | 'lodging' | 'equipment' | 'parking'; label: string; className: string }> = [
-  { key: 'ab', label: 'A&B', className: 'bg-brand-700 dark:bg-brand-500' },
-  { key: 'lodging', label: 'Hospedagem', className: 'bg-brand-500 dark:bg-brand-700' },
-  { key: 'equipment', label: 'Equipamentos', className: 'bg-brand-300 dark:bg-brand-800' },
-  { key: 'parking', label: 'Estacionamento', className: 'bg-brand-200 dark:bg-brand-900' },
+const COMPOSITION_PARTS: Array<{ key: 'rental' | 'ab' | 'lodging' | 'equipment' | 'parking'; label: string; rate: number }> = [
+  { key: 'rental', label: 'Locação de sala', rate: NET_RATES.rental },
+  { key: 'ab', label: 'A&B', rate: NET_RATES.ab },
+  { key: 'lodging', label: 'Hospedagem', rate: NET_RATES.lodging },
+  { key: 'equipment', label: 'Equipamentos', rate: NET_RATES.equipment },
+  { key: 'parking', label: 'Estacionamento', rate: NET_RATES.parking },
 ]
 
-/** Locação de sala em destaque; líquida, bruta e as demais receitas abaixo. */
-function ValueRow({ title, subtitle, values }: { title: string; subtitle: string; values: LeadValueBreakdown }) {
-  const extras = values.total - values.rental
+function CompositionPie({
+  title,
+  subtitle,
+  values,
+  theme,
+}: {
+  title: string
+  subtitle: string
+  values: LeadValueBreakdown
+  theme: ChartTheme
+}) {
+  const slices = COMPOSITION_PARTS.map((part, index) => ({
+    label: part.label,
+    value: values[part.key],
+    fill: theme.composition[index],
+    hint: part.rate < 1 ? `${Math.round(part.rate * 100)}% entra na líquida` : undefined,
+  }))
+
   return (
     <div>
-      <div>
-        <p className="text-sm font-semibold text-slate-900 dark:text-white">{title}</p>
-        <p className="text-xs text-slate-500 dark:text-slate-400">{subtitle}</p>
-      </div>
-
-      <div className="mt-3 flex flex-wrap items-baseline justify-between gap-2 rounded-lg bg-brand-50 px-3 py-2.5 dark:bg-brand-900/30">
-        <span className="text-xs font-semibold text-brand-800 dark:text-brand-200">Locação de sala</span>
-        <span className="text-xl font-bold tabular-nums text-brand-900 dark:text-white" title={formatBRL(values.rental)}>
-          {formatCurrencyCompact(values.rental)}
-        </span>
-      </div>
-
-      <dl className="mt-3 grid grid-cols-2 gap-3 text-sm">
+      <div className="mb-4 flex flex-wrap items-end justify-between gap-x-6 gap-y-2">
         <div>
-          <dt className="text-xs text-slate-500 dark:text-slate-400">Receita líquida total</dt>
-          <dd className="font-semibold tabular-nums text-slate-900 dark:text-white" title={formatBRL(values.net)}>
-            {formatCurrencyCompact(values.net)}
-          </dd>
+          <p className="text-sm font-semibold text-slate-900 dark:text-white">{title}</p>
+          <p className="text-xs text-slate-500 dark:text-slate-400">{subtitle}</p>
         </div>
-        <div>
-          <dt className="text-xs text-slate-500 dark:text-slate-400">Receita bruta total</dt>
-          <dd className="font-semibold tabular-nums text-slate-900 dark:text-white" title={formatBRL(values.total)}>
-            {formatCurrencyCompact(values.total)}
-          </dd>
-        </div>
-      </dl>
-
-      <p className="mt-4 text-xs font-medium text-slate-600 dark:text-slate-300">
-        Demais receitas: <span className="tabular-nums">{formatBRL(extras)}</span>
-      </p>
-      <div className="mt-1.5 flex h-2 gap-0.5 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800" aria-hidden="true">
-        {extras > 0 &&
-          EXTRA_COMPONENTS.map((component) =>
-            values[component.key] > 0 ? (
-              <span
-                key={component.key}
-                className={cn('h-full first:rounded-l-full last:rounded-r-full', component.className)}
-                style={{ width: `${(values[component.key] / extras) * 100}%` }}
-              />
-            ) : null,
-          )}
-      </div>
-      <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-2 sm:grid-cols-4">
-        {EXTRA_COMPONENTS.map((component) => (
-          <div key={component.key} className="min-w-0">
-            <dt className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
-              <span className={cn('h-2 w-2 shrink-0 rounded-sm', component.className)} aria-hidden="true" />
-              <span className="truncate">{component.label}</span>
-            </dt>
-            <dd className="mt-0.5 text-sm font-semibold tabular-nums text-slate-900 dark:text-white" title={formatBRL(values[component.key])}>
-              {compactCurrencyFormatter.format(values[component.key])}
+        <dl className="flex gap-5 text-right">
+          <div>
+            <dt className="text-xs text-slate-500 dark:text-slate-400">Bruta</dt>
+            <dd className="text-base font-semibold tabular-nums text-slate-900 dark:text-white" title={formatBRL(values.total)}>
+              {formatCurrencyCompact(values.total)}
             </dd>
           </div>
-        ))}
-      </dl>
+          <div>
+            <dt className="text-xs text-slate-500 dark:text-slate-400">Líquida do hotel</dt>
+            <dd className="text-base font-semibold tabular-nums text-slate-900 dark:text-white" title={formatBRL(values.net)}>
+              {formatCurrencyCompact(values.net)}
+            </dd>
+          </div>
+        </dl>
+      </div>
+      {values.total > 0 ? (
+        <PieWithLegend slices={slices} formatValue={formatCurrencyCompact} ariaLabel={`Composição: ${title}`} theme={theme} />
+      ) : (
+        <EmptyChart message="Sem valores no período." />
+      )}
     </div>
   )
 }
@@ -947,43 +1179,44 @@ function ValueCompositionCard({
   open,
   closedCount,
   openCount,
+  theme,
 }: {
   loading: boolean
   closed: LeadValueBreakdown
   open: LeadValueBreakdown
   closedCount: number
   openCount: number
+  theme: ChartTheme
 }) {
   return (
-    <section className={cn(cardClassName, 'mt-6 p-5')}>
-      <div className="mb-4">
-        <h2 className="text-base font-semibold text-slate-900 dark:text-white">Composição dos orçamentos</h2>
-        <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
-          Locação de sala em destaque · Receita bruta = locação + A&amp;B + hospedagem + equipamentos + estacionamento
-        </p>
-      </div>
+    <ChartCard
+      title="Composição dos orçamentos"
+      description="Quanto cada serviço representa na receita bruta: o que fechou e o que ainda está em negociação"
+    >
       {loading ? (
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-          <Skeleton className="h-28 w-full" />
-          <Skeleton className="h-28 w-full" />
+          <Skeleton className="h-44 w-full" />
+          <Skeleton className="h-44 w-full" />
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-2 xl:divide-x xl:divide-slate-100 dark:xl:divide-slate-800">
-          <ValueRow
-            title="Fechado (receita fechada)"
-            subtitle={`${formatInteger(closedCount)} lead(s) fechado(s) no período`}
+          <CompositionPie
+            title="Fechado"
+            subtitle={`${formatInteger(closedCount)} ${closedCount === 1 ? 'proposta fechada' : 'propostas fechadas'} no período`}
             values={closed}
+            theme={theme}
           />
           <div className="border-t border-slate-100 pt-6 xl:border-t-0 xl:pl-6 xl:pt-0 dark:border-slate-800">
-            <ValueRow
-              title="Em aberto (pipeline)"
-              subtitle={`${formatInteger(openCount)} lead(s) em negociação`}
+            <CompositionPie
+              title="Em negociação"
+              subtitle={`${formatInteger(openCount)} ${openCount === 1 ? 'proposta em aberto' : 'propostas em aberto'}`}
               values={open}
+              theme={theme}
             />
           </div>
         </div>
       )}
-    </section>
+    </ChartCard>
   )
 }
 
@@ -1217,6 +1450,29 @@ export default function Dashboard() {
     }
   }, [periodKey, range, customRangeError])
 
+  // ---- Período anterior (comparação do topo) ----
+  const previousPeriod = useMemo(() => getPreviousRange(range), [range])
+  const previousKey = `${previousPeriod.range.from}|${previousPeriod.range.to}|${leadsVersion}|${retryCount}`
+  const [previousResult, setPreviousResult] = useState<AsyncResult<DashboardLead[]> | null>(null)
+
+  useEffect(() => {
+    if (customRangeError) return
+    let isActive = true
+    const controller = new AbortController()
+    fetchLeadsInRange(previousPeriod.range, controller.signal)
+      .then((data) => {
+        if (isActive) setPreviousResult({ key: previousKey, data, error: null })
+      })
+      .catch(() => {
+        // Só informativo: sem a comparação, o topo mostra os números do período normalmente
+        if (isActive) setPreviousResult({ key: previousKey, data: null, error: LOAD_ERROR_MESSAGE })
+      })
+    return () => {
+      isActive = false
+      controller.abort()
+    }
+  }, [previousKey, previousPeriod, customRangeError])
+
   // ---- Leads em aberto (independe do período: follow-up é sempre agora) ----
   const followUpKey = `${leadsVersion}|${retryCount}`
   const [followUpResult, setFollowUpResult] = useState<AsyncResult<Lead[]> | null>(null)
@@ -1249,6 +1505,12 @@ export default function Dashboard() {
 
   // ---- Agregações ----
   const kpis = useMemo(() => computeKpis(leads ?? [], range), [leads, range])
+  const previousLoading = previousResult?.key !== previousKey
+  const previousLeads = previousResult?.key === previousKey ? previousResult.data : null
+  const previousKpis = useMemo(
+    () => (previousLeads ? computeKpis(previousLeads, previousPeriod.range) : null),
+    [previousLeads, previousPeriod],
+  )
   const trend = useMemo(() => computeTrend(leads ?? [], range, granularity), [leads, range, granularity])
   const lossReasons = useMemo(
     () => countBy((leads ?? []).filter((lead) => lead.status === 'perdido').map((lead) => lead.loss_reason)),
@@ -1278,7 +1540,7 @@ export default function Dashboard() {
     <>
       <PageHeader
         title="Dashboard"
-        description={`Visão geral do funil de leads · ${formatRangeLabel(range)}`}
+        description={`Resultado comercial · ${formatRangeLabel(range)}`}
         actions={
           <button
             type="button"
@@ -1353,8 +1615,17 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* KPIs */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      {/* 1. Resultado do período: dinheiro e funil */}
+      <PeriodSummary
+        kpis={kpis}
+        previous={previousKpis}
+        previousLabel={previousPeriod.label}
+        loading={showPeriodSkeleton}
+        previousLoading={previousLoading}
+      />
+
+      {/* 2. Indicadores de volume e taxas */}
+      <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <KpiCard
           title="Solicitações recebidas"
           icon={Inbox}
@@ -1364,6 +1635,14 @@ export default function Dashboard() {
             <>
               Média de <strong className="font-semibold text-slate-700 dark:text-slate-200">{decimalFormatter.format(kpis.dailyAverage)}</strong> por dia
             </>
+          }
+          footer={
+            <Delta
+              current={kpis.total}
+              previous={previousKpis ? previousKpis.total : null}
+              label={previousPeriod.label}
+              loading={previousLoading}
+            />
           }
         />
         <KpiCard
@@ -1377,26 +1656,9 @@ export default function Dashboard() {
         <KpiCard
           title="Taxa de conversão geral"
           icon={TrendingUp}
-          highlight
           loading={showPeriodSkeleton}
           value={formatPercent(kpis.conversionRate)}
           detail={`${formatPercent(kpis.proposalConversionRate)} sobre propostas enviadas (${formatInteger(kpis.closed)}/${formatInteger(kpis.proposalsSent)})`}
-          footer={
-            <div className="space-y-1" title="Propostas recebidas no período que fecharam">
-              <div className="flex items-baseline justify-between gap-2">
-                <span className="text-brand-800 dark:text-brand-200">Locação de sala fechada</span>
-                <span className="text-lg font-semibold tabular-nums" title={formatBRL(kpis.closedBreakdown.rental)}>
-                  {formatCurrencyCompact(kpis.closedBreakdown.rental)}
-                </span>
-              </div>
-              <div className="flex items-baseline justify-between gap-2 text-xs text-brand-800 dark:text-brand-200">
-                <span>Receita bruta fechada</span>
-                <span className="tabular-nums" title={formatBRL(kpis.closedValue)}>
-                  {formatCurrencyCompact(kpis.closedValue)}
-                </span>
-              </div>
-            </div>
-          }
         />
         <KpiCard
           title="Taxa de perda / recusa"
@@ -1407,70 +1669,18 @@ export default function Dashboard() {
         />
       </div>
 
-      {/* Composição dos valores: fechado x em aberto */}
-      <ValueCompositionCard
-        loading={showPeriodSkeleton}
-        closed={kpis.closedBreakdown}
-        open={kpis.openBreakdown}
-        closedCount={kpis.closed}
-        openCount={kpis.open}
-      />
-
-      <MonthlyRevenueSection reloadKey={`${leadsVersion}|${retryCount}`} theme={chartTheme} />
-
-      {/* Gráficos */}
       <div className="mt-6 space-y-6">
-        <ChartCard
-          title="Evolução das solicitações"
-          description={`${granularity === 'day' ? 'Por dia' : 'Por mês'}, pela data de entrada do lead`}
-        >
-          {showPeriodSkeleton ? (
-            <Skeleton className="h-80 w-full" />
-          ) : hasLeads ? (
-            <TrendChart data={trend} granularity={granularity} theme={chartTheme} />
-          ) : (
-            <EmptyChart message="Nenhuma solicitação recebida neste período." />
-          )}
-        </ChartCard>
+        {/* 3. Composição: de onde vem a receita */}
+        <ValueCompositionCard
+          loading={showPeriodSkeleton}
+          closed={kpis.closedBreakdown}
+          open={kpis.openBreakdown}
+          closedCount={kpis.closed}
+          openCount={kpis.open}
+          theme={chartTheme}
+        />
 
-        <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-          <ChartCard
-            title="Origem das solicitações"
-            description={
-            distribution === 'room'
-              ? 'Demanda por sala: cada sala marcada conta (um lead pode pedir várias), % sobre as solicitações'
-              : 'Por meio de prospecção'
-          }
-            actions={
-              <SegmentedControl
-                options={DISTRIBUTION_OPTIONS}
-                value={distribution}
-                onChange={setDistribution}
-                ariaLabel="Agrupar por"
-              />
-            }
-          >
-            {showPeriodSkeleton ? (
-              <Skeleton className="h-52 w-full" />
-            ) : hasLeads ? (
-              <DistributionBars data={distributionData} theme={chartTheme} requests={leads?.length ?? 0} />
-            ) : (
-              <EmptyChart message="Sem dados no período." />
-            )}
-          </ChartCard>
-
-          <ChartCard title="Motivos de perda" description="Ranking dos gargalos no período">
-            {showPeriodSkeleton ? (
-              <Skeleton className="h-52 w-full" />
-            ) : lossReasons.length > 0 ? (
-              <LossReasonsChart data={lossReasons} theme={chartTheme} />
-            ) : (
-              <EmptyChart message="Nenhum lead perdido neste período." />
-            )}
-          </ChartCard>
-
-        </div>
-
+        {/* 4. O que fazer agora */}
         <ChartCard
           title="Últimos leads em aberto"
           description="Precisam de follow-up · atualize a situação sem sair da Dashboard"
@@ -1490,6 +1700,62 @@ export default function Dashboard() {
             </div>
           ) : (
             <FollowUpTable leads={openLeads} onEdit={handleQuickEdit} />
+          )}
+        </ChartCard>
+
+        {/* 5. Origem e perdas */}
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+          <ChartCard
+            title="Origem das solicitações"
+            description={
+              distribution === 'room'
+                ? 'Demanda por sala: cada sala marcada conta (um lead pode pedir várias)'
+                : 'Por meio de prospecção'
+            }
+            actions={
+              <SegmentedControl
+                options={DISTRIBUTION_OPTIONS}
+                value={distribution}
+                onChange={setDistribution}
+                ariaLabel="Agrupar por"
+              />
+            }
+          >
+            {showPeriodSkeleton ? (
+              <Skeleton className="h-44 w-full" />
+            ) : hasLeads ? (
+              <DistributionPie data={distributionData} theme={chartTheme} />
+            ) : (
+              <EmptyChart message="Sem dados no período." />
+            )}
+          </ChartCard>
+
+          <ChartCard title="Motivos de perda" description="Ranking dos gargalos no período">
+            {showPeriodSkeleton ? (
+              <Skeleton className="h-52 w-full" />
+            ) : lossReasons.length > 0 ? (
+              <LossReasonsChart data={lossReasons} theme={chartTheme} />
+            ) : (
+              <EmptyChart message="Nenhum lead perdido neste período." />
+            )}
+          </ChartCard>
+        </div>
+      </div>
+
+      {/* 6. Histórico */}
+      <MonthlyRevenueSection reloadKey={`${leadsVersion}|${retryCount}`} theme={chartTheme} />
+
+      <div className="mt-6">
+        <ChartCard
+          title="Evolução das solicitações"
+          description={`${granularity === 'day' ? 'Por dia' : 'Por mês'}, pela data de entrada do lead`}
+        >
+          {showPeriodSkeleton ? (
+            <Skeleton className="h-80 w-full" />
+          ) : hasLeads ? (
+            <TrendChart data={trend} granularity={granularity} theme={chartTheme} />
+          ) : (
+            <EmptyChart message="Nenhuma solicitação recebida neste período." />
           )}
         </ChartCard>
       </div>

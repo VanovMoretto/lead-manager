@@ -69,6 +69,48 @@ export function countElapsedDays(range: DateRange, today = new Date()): number {
   return Math.max(diff, 1)
 }
 
+const MONTH_NAMES = [
+  'janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
+  'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro',
+] as const
+
+/**
+ * Período de comparação: mês corrente contra o mesmo trecho do mês anterior, ano contra o
+ * mesmo trecho do ano anterior e, nos demais casos, a mesma quantidade de dias logo antes.
+ */
+export function getPreviousRange(range: DateRange): { range: DateRange; label: string } {
+  const from = parseLocalISODate(range.from)
+  const to = parseLocalISODate(range.to)
+  const sameMonth = from.getFullYear() === to.getFullYear() && from.getMonth() === to.getMonth()
+
+  if (from.getDate() === 1 && sameMonth) {
+    const start = new Date(from.getFullYear(), from.getMonth() - 1, 1)
+    const lastDay = new Date(from.getFullYear(), from.getMonth(), 0).getDate()
+    const end = new Date(start.getFullYear(), start.getMonth(), Math.min(to.getDate(), lastDay))
+    return { range: { from: toLocalISODate(start), to: toLocalISODate(end) }, label: MONTH_NAMES[start.getMonth()] }
+  }
+
+  if (from.getDate() === 1 && from.getMonth() === 0 && from.getFullYear() === to.getFullYear()) {
+    const year = from.getFullYear() - 1
+    const lastDay = new Date(year, to.getMonth() + 1, 0).getDate()
+    const end = new Date(year, to.getMonth(), Math.min(to.getDate(), lastDay))
+    return { range: { from: toLocalISODate(new Date(year, 0, 1)), to: toLocalISODate(end) }, label: String(year) }
+  }
+
+  const days = Math.round((to.getTime() - from.getTime()) / 86_400_000) + 1
+  const end = addDays(from, -1)
+  return {
+    range: { from: toLocalISODate(addDays(end, -(days - 1))), to: toLocalISODate(end) },
+    label: `${days} dias anteriores`,
+  }
+}
+
+/** Variação relativa; `null` quando não há base para comparar. */
+export function relativeChange(current: number, previous: number): number | null {
+  if (previous <= 0) return null
+  return (current - previous) / previous
+}
+
 /** Até 45 dias mostra por dia; acima disso, agrupa por mês. */
 export function getGranularity(range: DateRange): Granularity {
   const days =
