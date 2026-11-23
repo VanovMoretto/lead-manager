@@ -1,3 +1,5 @@
+import { isDemoMode } from './demoMode'
+
 /** Remove tudo que não for dígito. */
 export function onlyDigits(value: string): string {
   return value.replace(/\D/g, '')
@@ -33,10 +35,14 @@ export function formatCNPJ(value: string): string {
   return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}/${digits.slice(8, 12)}-${digits.slice(12)}`
 }
 
-/** CNPJ com 14 dígitos e os dois dígitos verificadores corretos (sequências repetidas são inválidas). */
+/**
+ * CNPJ com 14 dígitos e os dois dígitos verificadores corretos (sequências repetidas são inválidas).
+ * No modo demonstração basta ter 14 dígitos: os CNPJs de exemplo são fictícios de propósito.
+ */
 export function isValidCNPJ(value: string): boolean {
   const digits = onlyDigits(value)
   if (digits.length !== 14 || /^(\d)\1{13}$/.test(digits)) return false
+  if (isDemoMode) return true
   const checkDigit = (length: number) => {
     const weights = length === 12 ? [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2] : [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]
     const sum = weights.reduce((total, weight, index) => total + Number(digits[index]) * weight, 0)

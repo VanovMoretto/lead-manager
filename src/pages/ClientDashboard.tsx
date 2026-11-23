@@ -50,6 +50,7 @@ import { RateLimitError, guardMutation } from '../lib/rateLimit'
 import { supabase } from '../lib/supabase'
 import { cn, isRowClick } from '../lib/utils'
 import { CLIENT_TYPE_LABELS, type Client, type ClientContact, type ClientType, type Lead } from '../types/lead'
+import DemoFakeTag from '../components/DemoFakeTag'
 
 const CONTACT_COLUMNS = 'id, client_id, name, role, phone, phone_digits, email, is_primary, active, created_at'
 const MAX_NOTES_LENGTH = 5000
@@ -359,7 +360,10 @@ function ClientHeaderEditor({ client, onSaved }: { client: Client; onSaved: (cli
             </span>
           )}
           {client.cnpj ? (
-            <span className="font-medium tabular-nums">CNPJ {client.cnpj}</span>
+            <span className="font-medium tabular-nums">
+              CNPJ {client.cnpj}
+              <DemoFakeTag />
+            </span>
           ) : (
             client.client_type === 'company' && (
               <button

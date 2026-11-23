@@ -1,3 +1,4 @@
+import { isDemoMode } from './demoMode'
 import { isValidCNPJ, onlyDigits } from './format'
 
 const BRASIL_API_URL = 'https://brasilapi.com.br/api/cnpj/v1/'
@@ -33,7 +34,7 @@ function toTitleCase(value: string): string {
  * Informativa: qualquer falha (sem internet, CNPJ não encontrado, API fora do ar) devolve null.
  */
 export async function lookupCnpj(cnpj: string, signal?: AbortSignal): Promise<CnpjLookupResult | null> {
-  if (!isValidCNPJ(cnpj)) return null
+  if (isDemoMode || !isValidCNPJ(cnpj)) return null
   const digits = onlyDigits(cnpj)
   if (cache.has(digits)) return cache.get(digits) ?? null
   const controller = new AbortController()

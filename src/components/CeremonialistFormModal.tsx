@@ -165,7 +165,7 @@ export default function CeremonialistFormModal({ onClose, onCreated }: Ceremonia
                 type="tel"
                 inputMode="numeric"
                 autoComplete="off"
-                placeholder="Ex.: (51) 99999-8888"
+                placeholder="Ex.: (00) 00000-0000"
                 value={form.phone}
                 onChange={(event) => update('phone', formatPhoneBR(event.target.value))}
                 aria-invalid={Boolean(errors.phone)}

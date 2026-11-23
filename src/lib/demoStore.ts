@@ -31,7 +31,7 @@ export { isDemoMode } from './demoMode'
 export { DEMO_ACCOUNTS, DEMO_PASSWORD } from './demoSeed'
 
 // v2: campanhas, registros de envio e notas da pesquisa
-const DB_STORAGE_KEY = 'gestao-leads-demo-db-v2'
+const DB_STORAGE_KEY = 'gestao-leads-demo-db-v3'
 const FILES_STORAGE_KEY = 'gestao-leads-demo-files-v1'
 const SESSION_STORAGE_KEY = 'gestao-leads-demo-session-v1'
 /** Arquivos maiores que isto ficam só na memória (o sessionStorage tem poucos MB). */
@@ -149,7 +149,12 @@ function normalizePhone(value: string | null | undefined): string | null {
 const digitsOrNull = (value: string | null | undefined) => onlyDigits(value ?? '') || null
 const trimOrNull = (value: string | null | undefined) => (value ?? '').trim() || null
 const collapseSpaces = (value: string | null | undefined) => trimOrNull((value ?? '').replace(/\s+/g, ' '))
-const corporateDomain = (email: string | null | undefined) => getCorporateEmailDomain(email ?? '') || null
+// Os e-mails fictícios usam o domínio reservado .example; os de provedores pessoais continuam pessoais
+const DEMO_PERSONAL_DOMAIN = /^(gmail|googlemail|hotmail|outlook|live|yahoo|icloud|bol|uol|terra)\.example$/
+const corporateDomain = (email: string | null | undefined) => {
+  const domain = getCorporateEmailDomain(email ?? '')
+  return domain && !DEMO_PERSONAL_DOMAIN.test(domain) ? domain : null
+}
 const sameText = (a: string | null | undefined, b: string | null | undefined) =>
   (a ?? '').trim().toLowerCase() === (b ?? '').trim().toLowerCase()
 

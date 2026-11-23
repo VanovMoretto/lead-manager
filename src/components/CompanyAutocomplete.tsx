@@ -2,6 +2,7 @@ import { useId, useMemo, useState, type KeyboardEvent } from 'react'
 import { Building2 } from 'lucide-react'
 import type { CompanyOption } from '../hooks/useCompanies'
 import { cn } from '../lib/utils'
+import DemoFakeTag from './DemoFakeTag'
 
 const MAX_SUGGESTIONS = 8
 
@@ -149,7 +150,9 @@ export default function CompanyAutocomplete({
                   {option.name}
                   {option.branch_label && <span className="font-normal text-slate-500 dark:text-slate-400"> · {option.branch_label}</span>}
                 </span>
-                {option.cnpj && <span className="block text-xs tabular-nums text-slate-500 dark:text-slate-400">CNPJ {option.cnpj}</span>}
+                {option.cnpj && <span className="block text-xs tabular-nums text-slate-500 dark:text-slate-400">CNPJ {option.cnpj}
+                    <DemoFakeTag />
+                  </span>}
               </span>
             </li>
           ))}

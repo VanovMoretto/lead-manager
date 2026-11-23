@@ -98,6 +98,7 @@ import {
   type PaymentStatus,
   type SurveyStatus,
 } from '../types/lead'
+import DemoFakeTag from '../components/DemoFakeTag'
 
 const MAX_OBSERVATIONS_LENGTH = 5000
 
@@ -1153,7 +1154,21 @@ function ContactCard({
               lead.contact_email || empty
             )}
           </InfoRow>
-          <InfoRow label="Empresa">{lead.company ? `${lead.company}${lead.cnpj ? ` · CNPJ ${lead.cnpj}` : ''}` : 'Pessoa física'}</InfoRow>
+          <InfoRow label="Empresa">
+            {lead.company ? (
+              <>
+                {lead.company}
+                {lead.cnpj && (
+                  <>
+                    {` · CNPJ ${lead.cnpj}`}
+                    <DemoFakeTag />
+                  </>
+                )}
+              </>
+            ) : (
+              'Pessoa física'
+            )}
+          </InfoRow>
           <InfoRow label="Meio de prospecção">{lead.origin || empty}</InfoRow>
           {lead.marketing_opt_out && (
             <p className="flex items-center gap-1.5 rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
@@ -1187,7 +1202,7 @@ function ContactCard({
             type="tel"
             inputMode="numeric"
             autoComplete="off"
-            placeholder="Ex.: (51) 99999-8888"
+            placeholder="Ex.: (00) 00000-0000"
             value={draft.contact_phone}
             onChange={(event) => update('contact_phone', formatPhoneBR(event.target.value))}
             aria-invalid={Boolean(errors.contact_phone)}
@@ -1690,7 +1705,12 @@ function LeadDetailsContent({ lead, loading, onLeadChange }: { lead: Lead; loadi
             <p className="mt-1 flex items-center gap-1.5 text-sm font-medium text-slate-600 dark:text-slate-300">
               <Building2 className="h-4 w-4 text-slate-400" aria-hidden="true" />
               {lead.company}
-              {lead.cnpj && <span className="font-normal tabular-nums text-slate-500 dark:text-slate-400">· CNPJ {lead.cnpj}</span>}
+              {lead.cnpj && (
+                <span className="font-normal tabular-nums text-slate-500 dark:text-slate-400">
+                  · CNPJ {lead.cnpj}
+                  <DemoFakeTag />
+                </span>
+              )}
             </p>
           )}
           {lead.client_id && <ClientLink clientId={lead.client_id} />}

@@ -53,6 +53,7 @@ import {
   type YesNoFilter,
 } from '../lib/leadQuery'
 import { DEFAULT_LOSS_REASONS, type Lead, type LeadStatus } from '../types/lead'
+import DemoFakeTag from '../components/DemoFakeTag'
 
 // =============================================================================
 // Constantes visuais
@@ -722,7 +723,12 @@ export default function LeadSearch() {
                           </span>
                         </p>
                       )}
-                      {lead.cnpj && <p className="mt-0.5 text-xs tabular-nums text-slate-500 dark:text-slate-400">CNPJ {lead.cnpj}</p>}
+                      {lead.cnpj && (
+                        <p className="mt-0.5 text-xs tabular-nums text-slate-500 dark:text-slate-400">
+                          CNPJ {lead.cnpj}
+                          <DemoFakeTag />
+                        </p>
+                      )}
                       <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
                         <span>{[lead.contact_phone, lead.contact_email].filter(Boolean).join(' · ') || 'Sem contato'}</span>
                         <WhatsAppButton lead={lead} />

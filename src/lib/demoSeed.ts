@@ -1,6 +1,6 @@
 /**
  * Base fictícia do Modo Demonstração (portfólio). Nenhum dado aqui é real: empresas, pessoas,
- * telefones, e-mails e CNPJs foram inventados (os CNPJs só têm dígitos verificadores válidos).
+ * telefones (DDD 00), e-mails (domínio .example) e CNPJs (00.000.00X/0001-00, que não existem) foram inventados.
  *
  * As datas são relativas a "hoje", para a Dashboard sempre abrir com o mês atual preenchido,
  * propostas antigas aguardando retorno e eventos passados e futuros.
@@ -79,21 +79,6 @@ export type DemoLeadSeed = {
   lead: Omit<LeadInsert, 'event_date' | 'event_end_date' | 'user_id' | 'status'> & { status: LeadStatus }
 }
 
-/** Calcula os dois dígitos verificadores de um CNPJ fictício a partir dos 12 primeiros. */
-function demoCnpj(base: string): string {
-  const digits = base.split('').map(Number)
-  const check = (length: number) => {
-    const weights = length === 12 ? [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2] : [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]
-    const rest = weights.reduce((sum, weight, index) => sum + digits[index] * weight, 0) % 11
-    return rest < 2 ? 0 : 11 - rest
-  }
-  digits.push(check(12))
-  digits.push(check(13))
-  const d = digits.join('')
-  return `${d.slice(0, 2)}.${d.slice(2, 5)}.${d.slice(5, 8)}/${d.slice(8, 12)}-${d.slice(12)}`
-}
-
-
 /** Valores de A&B, hospedagem, equipamentos e estacionamento com os "has_*" coerentes. */
 function services(values: { ab?: number; lodging?: number; equipment?: number; parking?: number }) {
   return {
@@ -109,15 +94,15 @@ function services(values: { ab?: number; lodging?: number; equipment?: number; p
 }
 
 export function demoLeads(): DemoLeadSeed[] {
-const CNPJ = {
-    vertice: demoCnpj('482310740001'),
-    aurora: demoCnpj('301958220001'),
-    horizonte: demoCnpj('117402690001'),
-    nexa: demoCnpj('276605130001'),
-    biovida: demoCnpj('093481560001'),
-    agrovale: demoCnpj('550127380001'),
-    meridiano: demoCnpj('620045910001'),
-    atlas: demoCnpj('338712040001'),
+  const CNPJ = {
+    vertice: '00.000.001/0001-00',
+    aurora: '00.000.002/0001-00',
+    horizonte: '00.000.003/0001-00',
+    nexa: '00.000.004/0001-00',
+    biovida: '00.000.005/0001-00',
+    agrovale: '00.000.006/0001-00',
+    meridiano: '00.000.007/0001-00',
+    atlas: '00.000.008/0001-00',
   }
 
   return [
@@ -132,8 +117,8 @@ const CNPJ = {
     attachment: 'rental_proposal',
     lead: {
       contact_name: 'Patrícia Nogueira',
-      contact_phone: '(11) 98234-5170',
-      contact_email: 'patricia.nogueira@verticeengenharia.com.br',
+      contact_phone: '(00) 98234-5170',
+      contact_email: 'patricia.nogueira@verticeengenharia.example',
       company: 'Vértice Engenharia',
       cnpj: CNPJ.vertice,
       origin: 'Indicação',
@@ -159,8 +144,8 @@ const CNPJ = {
     user: 'sales',
     lead: {
       contact_name: 'Patrícia Nogueira',
-      contact_phone: '(11) 98234-5170',
-      contact_email: 'patricia.nogueira@verticeengenharia.com.br',
+      contact_phone: '(00) 98234-5170',
+      contact_email: 'patricia.nogueira@verticeengenharia.example',
       company: 'Vértice Engenharia',
       cnpj: CNPJ.vertice,
       origin: 'Cliente Recorrente',
@@ -183,8 +168,8 @@ const CNPJ = {
     user: 'sales',
     lead: {
       contact_name: 'Ricardo Almeida',
-      contact_phone: '(11) 97410-2286',
-      contact_email: 'ricardo.almeida@verticeengenharia.com.br',
+      contact_phone: '(00) 97410-2286',
+      contact_email: 'ricardo.almeida@verticeengenharia.example',
       company: 'Vértice Engenharia',
       cnpj: CNPJ.vertice,
       origin: 'Cliente Recorrente',
@@ -210,8 +195,8 @@ const CNPJ = {
     attachment: 'ab_proposal',
     lead: {
       contact_name: 'Marcelo Tavares',
-      contact_phone: '(21) 99188-4032',
-      contact_email: 'marcelo.tavares@horizonteseguros.com.br',
+      contact_phone: '(00) 99188-4032',
+      contact_email: 'marcelo.tavares@horizonteseguros.example',
       company: 'Grupo Horizonte Seguros',
       cnpj: CNPJ.horizonte,
       origin: 'Google',
@@ -237,8 +222,8 @@ const CNPJ = {
     user: 'admin',
     lead: {
       contact_name: 'Marcelo Tavares',
-      contact_phone: '(21) 99188-4032',
-      contact_email: 'marcelo.tavares@horizonteseguros.com.br',
+      contact_phone: '(00) 99188-4032',
+      contact_email: 'marcelo.tavares@horizonteseguros.example',
       company: 'Grupo Horizonte Seguros',
       cnpj: CNPJ.horizonte,
       origin: 'Cliente Recorrente',
@@ -259,8 +244,8 @@ const CNPJ = {
     user: 'admin',
     lead: {
       contact_name: 'Luana Prado',
-      contact_phone: '(21) 98820-1457',
-      contact_email: 'luana.prado@horizonteseguros.com.br',
+      contact_phone: '(00) 98820-1457',
+      contact_email: 'luana.prado@horizonteseguros.example',
       company: 'Grupo Horizonte Seguros',
       cnpj: CNPJ.horizonte,
       origin: 'Cliente Recorrente',
@@ -285,8 +270,8 @@ const CNPJ = {
     user: 'sales',
     lead: {
       contact_name: 'Camila Duarte',
-      contact_phone: '(11) 99671-3308',
-      contact_email: 'camila.duarte@auroracosmeticos.com.br',
+      contact_phone: '(00) 99671-3308',
+      contact_email: 'camila.duarte@auroracosmeticos.example',
       company: 'Aurora Cosméticos',
       cnpj: CNPJ.aurora,
       origin: 'Instagram',
@@ -311,8 +296,8 @@ const CNPJ = {
     user: 'sales',
     lead: {
       contact_name: 'Camila Duarte',
-      contact_phone: '(11) 99671-3308',
-      contact_email: 'camila.duarte@auroracosmeticos.com.br',
+      contact_phone: '(00) 99671-3308',
+      contact_email: 'camila.duarte@auroracosmeticos.example',
       company: 'Aurora Cosméticos',
       cnpj: CNPJ.aurora,
       origin: 'Cliente Recorrente',
@@ -339,8 +324,8 @@ const CNPJ = {
     attachment: 'rental_proposal',
     lead: {
       contact_name: 'Gustavo Lins',
-      contact_phone: '(11) 3456-7821',
-      contact_email: 'gustavo.lins@nexatec.com.br',
+      contact_phone: '(00) 3456-7821',
+      contact_email: 'gustavo.lins@nexatec.example',
       company: 'Nexa Tecnologia',
       cnpj: CNPJ.nexa,
       origin: 'Site Oficial',
@@ -361,8 +346,8 @@ const CNPJ = {
     user: 'sales',
     lead: {
       contact_name: 'Dra. Helena Castro',
-      contact_phone: '(31) 99702-6614',
-      contact_email: 'helena.castro@biovidalab.com.br',
+      contact_phone: '(00) 99702-6614',
+      contact_email: 'helena.castro@biovidalab.example',
       company: 'Laboratório BioVida',
       cnpj: CNPJ.biovida,
       origin: 'Google',
@@ -383,8 +368,8 @@ const CNPJ = {
     user: 'admin',
     lead: {
       contact_name: 'Roberto Siqueira',
-      contact_phone: '(41) 99345-2290',
-      contact_email: 'roberto@institutoeducarmais.org.br',
+      contact_phone: '(00) 99345-2290',
+      contact_email: 'roberto@institutoeducarmais.example',
       company: 'Instituto Educar+',
       origin: 'Indicação',
       room_interests: ['Auditório Panorama'],
@@ -404,8 +389,8 @@ const CNPJ = {
     user: 'sales',
     lead: {
       contact_name: 'Fábio Rezende',
-      contact_phone: '(35) 99812-7743',
-      contact_email: 'fabio@cafemontanha.com.br',
+      contact_phone: '(00) 99812-7743',
+      contact_email: 'fabio@cafemontanha.example',
       company: 'Café Montanha',
       origin: 'Instagram',
       room_interests: ['Terraço Gourmet'],
@@ -427,8 +412,8 @@ const CNPJ = {
     user: 'sales',
     lead: {
       contact_name: 'Tatiane Moura',
-      contact_phone: '(11) 98123-4409',
-      contact_email: 'tatiane.moura@atlaslog.com.br',
+      contact_phone: '(00) 98123-4409',
+      contact_email: 'tatiane.moura@atlaslog.example',
       company: 'Atlas Logística',
       cnpj: CNPJ.atlas,
       origin: 'WhatsApp Comercial',
@@ -447,8 +432,8 @@ const CNPJ = {
     user: 'admin',
     lead: {
       contact_name: 'Dr. Paulo Arantes',
-      contact_phone: '(11) 3222-9081',
-      contact_email: 'contato@sorrisopleno.com.br',
+      contact_phone: '(00) 3222-9081',
+      contact_email: 'contato@sorrisopleno.example',
       company: 'Clínica Sorriso Pleno',
       origin: 'Site Oficial',
       room_interests: ['Sala Rubi'],
@@ -471,8 +456,8 @@ const CNPJ = {
     user: 'sales',
     lead: {
       contact_name: 'Bruno Kenji',
-      contact_phone: '(11) 99456-0187',
-      contact_email: 'bruno@pulsarmkt.com.br',
+      contact_phone: '(00) 99456-0187',
+      contact_email: 'bruno@pulsarmkt.example',
       company: 'Agência Pulsar Marketing',
       origin: 'Instagram',
       room_interests: ['Terraço Gourmet', 'Salão Imperial'],
@@ -493,8 +478,8 @@ const CNPJ = {
     attachment: 'rental_proposal',
     lead: {
       contact_name: 'Sérgio Bortolini',
-      contact_phone: '(54) 99623-1150',
-      contact_email: 'eventos@agrovale.coop.br',
+      contact_phone: '(00) 99623-1150',
+      contact_email: 'eventos@agrovale.example',
       company: 'Cooperativa Agrovale',
       cnpj: CNPJ.agrovale,
       origin: 'Indicação',
@@ -520,8 +505,8 @@ const CNPJ = {
     user: 'admin',
     lead: {
       contact_name: 'Juliana Freitas',
-      contact_phone: '(11) 97012-5530',
-      contact_email: 'juliana.freitas@bancomeridiano.com.br',
+      contact_phone: '(00) 97012-5530',
+      contact_email: 'juliana.freitas@bancomeridiano.example',
       company: 'Banco Meridiano',
       cnpj: CNPJ.meridiano,
       origin: 'Google',
@@ -542,8 +527,8 @@ const CNPJ = {
     user: 'sales',
     lead: {
       contact_name: 'Dra. Renata Vilela',
-      contact_phone: '(31) 3344-8890',
-      contact_email: 'secretaria@amregional.org.br',
+      contact_phone: '(00) 3344-8890',
+      contact_email: 'secretaria@amregional.example',
       company: 'Associação Médica Regional',
       origin: 'Site Oficial',
       room_interests: ['Auditório Panorama', 'Sala Rubi'],
@@ -565,8 +550,8 @@ const CNPJ = {
     user: 'admin',
     lead: {
       contact_name: 'Amanda Reis',
-      contact_phone: '(11) 99877-6120',
-      contact_email: 'amanda@studiolumiere.com.br',
+      contact_phone: '(00) 99877-6120',
+      contact_email: 'amanda@studiolumiere.example',
       company: 'Studio Lumière Fotografia',
       origin: 'Instagram',
       room_interests: ['Sala Rubi'],
@@ -591,8 +576,8 @@ const CNPJ = {
     attachment: 'ab_proposal',
     lead: {
       contact_name: 'Juliana e Rafael Monteiro',
-      contact_phone: '(11) 98455-3021',
-      contact_email: 'juliana.rafael.casamento@gmail.com',
+      contact_phone: '(00) 98455-3021',
+      contact_email: 'juliana.rafael.casamento@gmail.example',
       origin: 'Instagram',
       room_interests: ['Salão Imperial', 'Terraço Gourmet'],
       event_name: 'Casamento Juliana & Rafael',
@@ -612,8 +597,8 @@ const CNPJ = {
     user: 'sales',
     lead: {
       contact_name: 'Cláudia Bernardes',
-      contact_phone: '(11) 99234-7751',
-      contact_email: 'claudia.bernardes@hotmail.com',
+      contact_phone: '(00) 99234-7751',
+      contact_email: 'claudia.bernardes@hotmail.example',
       origin: 'Instagram',
       room_interests: ['Salão Imperial'],
       event_name: '15 anos da Beatriz',
@@ -632,7 +617,7 @@ const CNPJ = {
     user: 'admin',
     lead: {
       contact_name: 'Antônio Ferraz',
-      contact_phone: '(11) 3876-2215',
+      contact_phone: '(00) 3876-2215',
       contact_email: null,
       origin: 'Indicação',
       room_interests: ['Terraço Gourmet'],
@@ -654,8 +639,8 @@ const CNPJ = {
     user: 'sales',
     lead: {
       contact_name: 'Comissão Formatura Medicina',
-      contact_phone: '(11) 99001-4478',
-      contact_email: 'formatura.med26@gmail.com',
+      contact_phone: '(00) 99001-4478',
+      contact_email: 'formatura.med26@gmail.example',
       origin: 'Google',
       room_interests: ['Salão Imperial'],
       event_name: 'Baile de Formatura Medicina',
@@ -674,8 +659,8 @@ const CNPJ = {
     user: 'sales',
     lead: {
       contact_name: 'Larissa Gomes',
-      contact_phone: '(11) 98777-2063',
-      contact_email: 'larissa.gomes@outlook.com',
+      contact_phone: '(00) 98777-2063',
+      contact_email: 'larissa.gomes@outlook.example',
       origin: 'WhatsApp Comercial',
       room_interests: ['Sala Rubi'],
       event_name: 'Chá Revelação',
@@ -696,8 +681,8 @@ const CNPJ = {
     user: 'sales',
     lead: {
       contact_name: 'Mariana Lopes',
-      contact_phone: '(11) 99540-8812',
-      contact_email: 'mari.lopes@gmail.com',
+      contact_phone: '(00) 99540-8812',
+      contact_email: 'mari.lopes@gmail.example',
       origin: 'Instagram',
       room_interests: ['Terraço Gourmet'],
       event_name: 'Aniversário de 40 anos',
@@ -714,8 +699,8 @@ const CNPJ = {
     user: 'admin',
     lead: {
       contact_name: 'Carlos Mendes',
-      contact_phone: '(21) 99612-0034',
-      contact_email: 'carlos.mendes.palestras@gmail.com',
+      contact_phone: '(00) 99612-0034',
+      contact_email: 'carlos.mendes.palestras@gmail.example',
       origin: 'Site Oficial',
       room_interests: ['Sala Executiva'],
       event_name: 'Palestra Motivacional',
@@ -737,8 +722,8 @@ const CNPJ = {
     user: 'sales',
     lead: {
       contact_name: 'Fernanda Ribeiro',
-      contact_phone: '(11) 98612-4470',
-      contact_email: 'fernanda.ribeiro@gmail.com',
+      contact_phone: '(00) 98612-4470',
+      contact_email: 'fernanda.ribeiro@gmail.example',
       origin: 'Google',
       room_interests: ['Sala Executiva'],
       event_name: 'Workshop de Confeitaria',
@@ -759,8 +744,8 @@ const CNPJ = {
     user: 'sales',
     lead: {
       contact_name: 'Fernanda Ribeiro',
-      contact_phone: '(11) 98612-4470',
-      contact_email: 'fernanda.ribeiro@gmail.com',
+      contact_phone: '(00) 98612-4470',
+      contact_email: 'fernanda.ribeiro@gmail.example',
       origin: 'Cliente Recorrente',
       room_interests: ['Sala Executiva', 'Terraço Gourmet'],
       event_name: 'Curso Intensivo de Confeitaria',

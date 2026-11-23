@@ -67,6 +67,7 @@ import {
   type LeadInsert,
   type LeadStatus,
 } from '../types/lead'
+import { isDemoMode } from '../lib/demoMode'
 
 // =============================================================================
 // Tipos públicos
@@ -577,7 +578,7 @@ function LeadForm({ onCancel, onSaved, onRequestReset, onStateChange, presetClie
                 type="tel"
                 inputMode="numeric"
                 autoComplete="off"
-                placeholder="Ex.: (51) 99999-8888"
+                placeholder="Ex.: (00) 00000-0000"
                 value={form.contact_phone}
                 onChange={(event) => update('contact_phone', formatPhoneBR(event.target.value))}
                 aria-invalid={Boolean(errors.contact_phone)}
@@ -611,7 +612,9 @@ function LeadForm({ onCancel, onSaved, onRequestReset, onStateChange, presetClie
                 ? 'Não será salvo: proposta como pessoa física.'
                 : linkChoice?.link && clientMatch?.client.cnpj && !onlyDigits(form.cnpj)
                   ? `Será usado o do cadastro: ${clientMatch.client.cnpj}`
-                  : 'Opcional em sondagens.'
+                  : isDemoMode
+                    ? 'Opcional em sondagens. Na demonstração, qualquer CNPJ de 14 dígitos é aceito.'
+                    : 'Opcional em sondagens.'
             }
           >
             <input
