@@ -219,12 +219,12 @@ export default function Login() {
       </section>
 
       {/* Formulário */}
-      <section className="relative flex w-full flex-1 items-center justify-center bg-canvas px-4 py-12 sm:px-8 lg:justify-end lg:pl-12 lg:pr-[13%] dark:bg-slate-950">
+      <section className="relative flex w-full flex-1 items-center justify-center bg-canvas px-4 py-12 sm:px-8 lg:justify-end lg:pl-12 lg:pr-[17%] dark:bg-slate-950">
         <div className="absolute right-4 top-4">
           <ThemeToggle />
         </div>
 
-        <div className="w-full max-w-[400px]">
+        <div className="w-full max-w-[440px]">
           <AppLogo size="md" showTagline className="mb-8 lg:hidden" />
 
           <div className="rounded-xl border border-slate-200 bg-white p-8 shadow-sm dark:border-slate-800 dark:bg-slate-900">
