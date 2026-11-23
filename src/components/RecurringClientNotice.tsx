@@ -122,11 +122,11 @@ function ClientMatchCard({ match, choice, locked, onLinkChange, onSelectContact,
       className="overflow-hidden rounded-xl border border-brand-200 bg-brand-50/60 text-sm text-slate-700 dark:border-brand-900/60 dark:bg-brand-900/15 dark:text-slate-200"
     >
       <div className="flex items-start gap-3 px-3.5 pt-3.5">
-        <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-brand-900 to-brand-600 text-white shadow-sm">
+        <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-brand-600 text-white">
           <Icon className="h-[18px] w-[18px]" aria-hidden="true" />
         </span>
         <div className="min-w-0 leading-snug">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-brand-700 dark:text-brand-300">
+          <p className="text-xs font-semibold text-brand-700 dark:text-brand-300">
             {locked
               ? 'Proposta para o cliente'
               : isCompany

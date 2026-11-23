@@ -5,10 +5,41 @@
 @layer base {
   html {
     @apply antialiased;
+    font-feature-settings: 'cv11', 'ss01';
+    color-scheme: light;
   }
 
-  /* Tema claro: página #F8FAFC (slate-50) | Tema escuro: slate-950 */
+  html.dark {
+    color-scheme: dark;
+  }
+
+  /* Fundo da área de trabalho: cinza-azulado claro | escuro: slate-950 */
   body {
-    @apply min-h-screen bg-slate-50 font-sans text-slate-900 transition-colors dark:bg-slate-950 dark:text-slate-100;
+    @apply min-h-screen bg-canvas font-sans text-slate-900 dark:bg-slate-950 dark:text-slate-100;
+  }
+
+  ::selection {
+    @apply bg-brand-200 text-brand-950 dark:bg-brand-800 dark:text-white;
+  }
+
+  :focus-visible {
+    @apply outline-none ring-2 ring-brand-600 ring-offset-2 ring-offset-white dark:ring-brand-400 dark:ring-offset-slate-900;
+  }
+
+  table {
+    font-variant-numeric: tabular-nums;
+  }
+
+  input,
+  textarea {
+    caret-color: theme('colors.brand.600');
+  }
+
+  * {
+    scrollbar-color: theme('colors.slate.300') transparent;
+  }
+
+  html.dark * {
+    scrollbar-color: theme('colors.slate.700') transparent;
   }
 }

@@ -173,7 +173,7 @@ function DeleteOptionModal({ option, candidates, onClose, onDelete }: DeleteOpti
             </p>
             {usageCount !== 0 && candidates.length > 0 && (
               <div className="mt-3">
-                <label htmlFor={selectId} className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                <label htmlFor={selectId} className="mb-1.5 block text-xs font-semibold text-slate-500 dark:text-slate-400">
                   O que fazer com essas propostas?
                 </label>
                 <select

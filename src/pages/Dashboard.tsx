@@ -6,8 +6,6 @@ import {
   CartesianGrid,
   Cell,
   LabelList,
-  Pie,
-  PieChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -295,46 +293,51 @@ function KpiCard({ title, icon: Icon, value, valueTitle, detail, footer, highlig
   return (
     <div
       className={cn(
-        'relative flex flex-col overflow-hidden rounded-xl p-5 shadow-sm',
+        'flex flex-col rounded-xl border p-5 shadow-sm',
         highlight
-          ? 'bg-gradient-to-br from-brand-900 to-brand-600 text-white'
-          : 'border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900',
+          ? 'border-brand-200 bg-brand-50 dark:border-brand-800 dark:bg-brand-950/60'
+          : 'border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900',
       )}
     >
-      {!highlight && <span className="absolute inset-x-0 top-0 h-1 bg-brand-600" aria-hidden="true" />}
-      <div className="flex items-start justify-between gap-3">
-        <p className={cn('text-sm font-medium', highlight ? 'text-brand-100' : 'text-slate-500 dark:text-slate-400')}>
-          {title}
-        </p>
-        <span
-          className={cn(
-            'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg',
-            highlight ? 'bg-white/15 text-white' : 'bg-brand-50 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300',
-          )}
-        >
-          <Icon className="h-5 w-5" aria-hidden="true" />
-        </span>
-      </div>
+      <p
+        className={cn(
+          'flex items-center gap-2 text-sm font-medium',
+          highlight ? 'text-brand-900 dark:text-brand-100' : 'text-slate-600 dark:text-slate-400',
+        )}
+      >
+        <Icon
+          className={cn('h-4 w-4 shrink-0', highlight ? 'text-brand-600 dark:text-brand-300' : 'text-slate-400 dark:text-slate-500')}
+          aria-hidden="true"
+        />
+        {title}
+      </p>
 
       {loading ? (
         <div className="mt-3 space-y-2">
-          <Skeleton className={cn('h-9 w-24', highlight && 'bg-white/20 dark:bg-white/20')} />
-          <Skeleton className={cn('h-4 w-40', highlight && 'bg-white/20 dark:bg-white/20')} />
+          <Skeleton className="h-8 w-24" />
+          <Skeleton className="h-4 w-40" />
         </div>
       ) : (
         <>
           <p
-            className={cn('mt-2 text-3xl font-bold tabular-nums', highlight ? 'text-white' : 'text-slate-900 dark:text-white')}
+            className={cn(
+              'mt-2 text-[1.75rem] font-semibold leading-tight tracking-[-0.01em] tabular-nums',
+              highlight ? 'text-brand-900 dark:text-white' : 'text-slate-900 dark:text-white',
+            )}
             title={valueTitle}
           >
             {value}
           </p>
-          <div className={cn('mt-1 text-sm', highlight ? 'text-brand-100' : 'text-slate-500 dark:text-slate-400')}>{detail}</div>
+          <div className={cn('mt-1 text-sm', highlight ? 'text-brand-800 dark:text-brand-200' : 'text-slate-500 dark:text-slate-400')}>
+            {detail}
+          </div>
           {footer && (
             <div
               className={cn(
                 'mt-4 border-t pt-3 text-sm',
-                highlight ? 'border-white/20 text-white' : 'border-slate-100 text-slate-600 dark:border-slate-800 dark:text-slate-300',
+                highlight
+                  ? 'border-brand-200 text-brand-900 dark:border-brand-800 dark:text-brand-100'
+                  : 'border-slate-100 text-slate-600 dark:border-slate-800 dark:text-slate-300',
               )}
             >
               {footer}
@@ -802,76 +805,42 @@ const DISTRIBUTION_OPTIONS: SegmentedOption<DistributionDimension>[] = [
   { value: 'origin', label: 'Prospecção' },
 ]
 
-/** 6 categorias com cor própria + "Outros". */
-const MAX_DONUT_SLICES = 7
+/** 6 categorias + "Outros". */
+const MAX_DISTRIBUTION_ROWS = 7
 
-function sliceColor(item: RankItem, index: number, theme: ChartTheme) {
-  if (item.label === OTHERS_LABEL || item.label === NOT_INFORMED_LABEL) return theme.neutral
-  return theme.series[index % theme.series.length]
-}
-
-function DistributionDonut({ data, theme, requests }: { data: RankItem[]; theme: ChartTheme; requests: number }) {
-  const total = requests
+/** Ranking em barras horizontais: uma cor só, "Outros" e "Não informado" em cinza. */
+function DistributionBars({ data, theme, requests }: { data: RankItem[]; theme: ChartTheme; requests: number }) {
+  const max = Math.max(...data.map((item) => item.count), 1)
 
   return (
-    <div className="flex flex-col items-center gap-5 sm:flex-row xl:flex-col 2xl:flex-row">
-      <div className="relative h-52 w-52 shrink-0">
-        <ResponsiveContainer width="100%" height="100%">
-          <PieChart>
-            <Pie
-              data={data}
-              dataKey="count"
-              nameKey="label"
-              innerRadius="62%"
-              outerRadius="100%"
-              paddingAngle={data.length > 1 ? 1 : 0}
-              stroke={theme.surface}
-              strokeWidth={2}
-              startAngle={90}
-              endAngle={-270}
-            >
-              {data.map((item, index) => (
-                <Cell key={item.label} fill={sliceColor(item, index, theme)} />
-              ))}
-            </Pie>
-            <Tooltip
-              content={
-                <ChartTooltip
-                  formatValue={(entry) => {
-                    const item = entry.payload as RankItem
-                    return `${formatInteger(item.count)} (${formatPercent(item.share)})`
-                  }}
+    <div>
+      <p className="mb-3 text-sm text-slate-500 dark:text-slate-400">
+        <span className="font-semibold tabular-nums text-slate-900 dark:text-white">{formatInteger(requests)}</span> solicitações no
+        período
+      </p>
+      <ul className="space-y-3">
+        {data.map((item) => {
+          const neutral = item.label === OTHERS_LABEL || item.label === NOT_INFORMED_LABEL
+          return (
+            <li key={item.label} className="text-sm">
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="truncate text-slate-700 dark:text-slate-200" title={item.label}>
+                  {item.label}
+                </span>
+                <span className="shrink-0 tabular-nums">
+                  <span className="font-semibold text-slate-900 dark:text-white">{formatInteger(item.count)}</span>
+                  <span className="ml-1.5 text-slate-500 dark:text-slate-400">{formatPercent(item.share)}</span>
+                </span>
+              </div>
+              <div className="mt-1.5 h-2 rounded-sm bg-slate-100 dark:bg-slate-800" aria-hidden="true">
+                <div
+                  className="h-full rounded-sm"
+                  style={{ width: `${(item.count / max) * 100}%`, backgroundColor: neutral ? theme.neutral : theme.series[0] }}
                 />
-              }
-            />
-          </PieChart>
-        </ResponsiveContainer>
-        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-          <span className="text-2xl font-bold tabular-nums text-slate-900 dark:text-white">{formatInteger(total)}</span>
-          <span className="text-xs text-slate-500 dark:text-slate-400">solicitações</span>
-        </div>
-      </div>
-
-      {/* Legenda com valores: rótulos visíveis para todas as fatias */}
-      <ul className="w-full min-w-0 space-y-2">
-        {data.map((item, index) => (
-          <li key={item.label} className="flex items-center justify-between gap-3 text-sm">
-            <span className="flex min-w-0 items-center gap-2">
-              <span
-                className="h-2.5 w-2.5 shrink-0 rounded-sm"
-                style={{ backgroundColor: sliceColor(item, index, theme) }}
-                aria-hidden="true"
-              />
-              <span className="truncate text-slate-600 dark:text-slate-300" title={item.label}>
-                {item.label}
-              </span>
-            </span>
-            <span className="shrink-0 tabular-nums">
-              <span className="font-semibold text-slate-900 dark:text-white">{formatInteger(item.count)}</span>
-              <span className="ml-1.5 text-slate-500 dark:text-slate-400">{formatPercent(item.share)}</span>
-            </span>
-          </li>
-        ))}
+              </div>
+            </li>
+          )
+        })}
       </ul>
     </div>
   )
@@ -919,7 +888,7 @@ function ValueRow({ title, subtitle, values }: { title: string; subtitle: string
       </div>
 
       <div className="mt-3 flex flex-wrap items-baseline justify-between gap-2 rounded-lg bg-brand-50 px-3 py-2.5 dark:bg-brand-900/30">
-        <span className="text-xs font-semibold uppercase tracking-wide text-brand-800 dark:text-brand-200">Locação de sala</span>
+        <span className="text-xs font-semibold text-brand-800 dark:text-brand-200">Locação de sala</span>
         <span className="text-xl font-bold tabular-nums text-brand-900 dark:text-white" title={formatBRL(values.rental)}>
           {formatCurrencyCompact(values.rental)}
         </span>
@@ -1075,7 +1044,7 @@ function FollowUpTable({
     <div className="-mx-5 overflow-x-auto">
       <table className="w-full min-w-[900px] whitespace-nowrap text-left text-sm">
         <thead>
-          <tr className="border-y border-slate-200 bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:border-slate-800 dark:bg-slate-950/50 dark:text-slate-400">
+          <tr className="border-y border-slate-200 bg-slate-50 text-xs font-semibold text-slate-500 dark:border-slate-800 dark:bg-slate-950/50 dark:text-slate-400">
             <th className="px-5 py-2.5">Contato</th>
             <th className="px-3 py-2.5">Salas / Origem</th>
             <th className="px-3 py-2.5">Data do evento</th>
@@ -1293,7 +1262,7 @@ export default function Dashboard() {
     // "Não informado" fica fora do ranking colorido e vai para o fim, junto com "Outros"
     const informed = ranked.filter((item) => item.label !== NOT_INFORMED_LABEL)
     const notInformed = ranked.filter((item) => item.label === NOT_INFORMED_LABEL)
-    return [...foldIntoOthers(informed, MAX_DONUT_SLICES - notInformed.length), ...notInformed]
+    return [...foldIntoOthers(informed, MAX_DISTRIBUTION_ROWS - notInformed.length), ...notInformed]
   }, [leads, distribution])
 
   // A edição fica na página da proposta; Fechou/Perdeu já chegam marcados no card Proposta
@@ -1415,12 +1384,12 @@ export default function Dashboard() {
           footer={
             <div className="space-y-1" title="Propostas recebidas no período que fecharam">
               <div className="flex items-baseline justify-between gap-2">
-                <span className="text-brand-100">Locação de sala fechada</span>
-                <span className="text-lg font-bold tabular-nums" title={formatBRL(kpis.closedBreakdown.rental)}>
+                <span className="text-brand-800 dark:text-brand-200">Locação de sala fechada</span>
+                <span className="text-lg font-semibold tabular-nums" title={formatBRL(kpis.closedBreakdown.rental)}>
                   {formatCurrencyCompact(kpis.closedBreakdown.rental)}
                 </span>
               </div>
-              <div className="flex items-baseline justify-between gap-2 text-xs text-brand-100">
+              <div className="flex items-baseline justify-between gap-2 text-xs text-brand-800 dark:text-brand-200">
                 <span>Receita bruta fechada</span>
                 <span className="tabular-nums" title={formatBRL(kpis.closedValue)}>
                   {formatCurrencyCompact(kpis.closedValue)}
@@ -1484,7 +1453,7 @@ export default function Dashboard() {
             {showPeriodSkeleton ? (
               <Skeleton className="h-52 w-full" />
             ) : hasLeads ? (
-              <DistributionDonut data={distributionData} theme={chartTheme} requests={leads?.length ?? 0} />
+              <DistributionBars data={distributionData} theme={chartTheme} requests={leads?.length ?? 0} />
             ) : (
               <EmptyChart message="Sem dados no período." />
             )}

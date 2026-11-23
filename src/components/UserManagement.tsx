@@ -207,7 +207,7 @@ export default function UserManagement() {
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full min-w-[720px] text-left text-sm">
-            <thead className="border-b border-slate-200 bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:border-slate-800 dark:bg-slate-950/50 dark:text-slate-400">
+            <thead className="border-b border-slate-200 bg-slate-50 text-xs font-semibold text-slate-500 dark:border-slate-800 dark:bg-slate-950/50 dark:text-slate-400">
               <tr>
                 <th scope="col" className="px-5 py-3">Usuário</th>
                 <th scope="col" className="px-3 py-3">Último acesso</th>

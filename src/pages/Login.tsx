@@ -22,6 +22,8 @@ import {
 // Acesso de 1 clique do Modo Demonstração (comparação direta com a variável: fora dele, nem entra no build)
 const DemoLoginPanel = import.meta.env.VITE_DEMO_MODE === 'true' ? lazy(() => import('../components/DemoLoginPanel')) : null
 
+const JOURNEY = ['Solicitação', 'Proposta', 'Fechamento', 'Faturamento', 'Pós-evento'] as const
+
 /**
  * "Lembrar meu usuário": guarda só o usuário, nunca a senha. A senha fica a cargo do
  * gerenciador de senhas do navegador (campos com name/autocomplete corretos).
@@ -60,8 +62,8 @@ const checkboxClassName =
   'h-4 w-4 rounded border-slate-300 text-brand-600 accent-brand-600 focus:ring-brand-600 dark:border-slate-600 dark:bg-slate-900'
 
 const inputClassName = cn(
-  'block w-full rounded-lg border border-slate-200 bg-white py-2.5 pl-10 pr-3 text-sm text-slate-900 shadow-sm',
-  'placeholder:text-slate-400 transition-colors',
+  'block w-full rounded-lg border border-slate-300 bg-white py-2.5 pl-10 pr-3 text-sm text-slate-900',
+  'placeholder:text-slate-500 transition-colors',
   'focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20',
   'dark:border-slate-700 dark:bg-slate-900 dark:text-white dark:placeholder:text-slate-500',
   'disabled:cursor-not-allowed disabled:opacity-60',
@@ -189,43 +191,52 @@ export default function Login() {
   }
 
   return (
-    <div className="flex min-h-screen bg-slate-50 dark:bg-slate-950">
-      {/* Painel de marca (desktop) */}
-      <section className="relative hidden w-1/2 overflow-hidden bg-gradient-to-br from-brand-900 via-brand-800 to-brand-600 lg:flex lg:flex-col lg:justify-between lg:p-12">
-        <div className="pointer-events-none absolute -right-24 -top-24 h-96 w-96 rounded-full bg-white/10 blur-3xl" />
-        <div className="pointer-events-none absolute -bottom-32 -left-16 h-96 w-96 rounded-full bg-brand-400/20 blur-3xl" />
+    <div className="flex min-h-screen bg-white dark:bg-slate-900">
+      {/* Painel da marca (desktop) */}
+      <section className="hidden w-[44%] max-w-[640px] flex-col justify-between bg-rail p-12 text-white lg:flex">
+        <AppLogo size="lg" variant="onDark" showTagline />
 
-        <AppLogo size="lg" variant="onDark" className="relative" />
-
-        <div className="relative max-w-lg text-white">
-          <h1 className="text-4xl font-bold leading-tight">Cada evento começa com um bom atendimento.</h1>
-          <p className="mt-4 text-lg text-brand-100">
-            Acompanhe leads, propostas e fechamentos em um só lugar, do primeiro contato ao contrato assinado.
+        <div className="max-w-md">
+          <h1 className="text-[2.5rem] font-semibold leading-[1.15] tracking-[-0.02em]">
+            Cada evento começa com um bom atendimento.
+          </h1>
+          <p className="mt-4 text-base leading-relaxed text-rail-muted">
+            Solicitações, propostas, fechamentos e faturamento no mesmo lugar, com a receita líquida de cada evento
+            calculada para você.
           </p>
+
+          <ol className="mt-10 flex flex-wrap items-center gap-y-2 text-xs font-medium text-rail-muted" aria-label="Etapas acompanhadas no Verto">
+            {JOURNEY.map((step, index) => (
+              <li key={step} className="flex items-center whitespace-nowrap">
+                {index > 0 && <span className="mx-2 h-px w-5 bg-rail-line" aria-hidden="true" />}
+                <span className={index === JOURNEY.length - 1 ? 'text-white' : undefined}>{step}</span>
+              </li>
+            ))}
+          </ol>
         </div>
 
-        <p className="relative text-sm text-brand-200">Acesso restrito à equipe comercial.</p>
+        <p className="text-sm text-rail-muted">Acesso restrito à equipe comercial.</p>
       </section>
 
       {/* Formulário */}
-      <section className="relative flex w-full flex-1 items-center justify-center px-4 py-12 sm:px-8">
+      <section className="relative flex w-full flex-1 items-center justify-center bg-canvas px-4 py-12 sm:px-8 dark:bg-slate-950">
         <div className="absolute right-4 top-4">
           <ThemeToggle />
         </div>
 
-        <div className="w-full max-w-md">
-          <AppLogo size="md" className="mb-8 lg:hidden" />
+        <div className="w-full max-w-[400px]">
+          <AppLogo size="md" showTagline className="mb-8 lg:hidden" />
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-8 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <div className="rounded-xl border border-slate-200 bg-white p-8 shadow-sm dark:border-slate-800 dark:bg-slate-900">
             {DemoLoginPanel && (
-              <Suspense fallback={<div className="mb-8 h-40 animate-pulse rounded-xl bg-brand-50 dark:bg-brand-950/40" />}>
+              <Suspense fallback={<div className="mb-8 h-40 animate-pulse rounded-xl bg-slate-100 dark:bg-slate-800" />}>
                 <DemoLoginPanel redirectTo={redirectTo} disabled={busy} />
               </Suspense>
             )}
-            <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Entrar</h2>
-            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Use seu usuário e senha cadastrados.</p>
+            <h2 className="text-xl font-semibold tracking-[-0.01em] text-slate-900 dark:text-white">Entrar no Verto</h2>
+            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Use seu usuário e senha da equipe.</p>
 
-            <form onSubmit={handleSubmit} method="post" action="#" className="mt-8 space-y-5" noValidate>
+            <form onSubmit={handleSubmit} method="post" action="#" className="mt-6 space-y-5" noValidate>
               <div>
                 <label htmlFor="username" className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">
                   Usuário
@@ -394,7 +405,7 @@ export default function Login() {
             </form>
           </div>
 
-          <p className="mt-6 text-center text-xs text-slate-400 dark:text-slate-500">
+          <p className="mt-6 text-center text-sm text-slate-500 dark:text-slate-400">
             Não tem acesso? Solicite ao administrador do sistema.
           </p>
         </div>

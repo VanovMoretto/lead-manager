@@ -37,7 +37,7 @@ type Counters = { sent: string; delivered: string; opened: string; clicked: stri
 const inputClassName =
   'block w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm placeholder:text-slate-400 focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white'
 
-const labelClassName = 'mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400'
+const labelClassName = 'mb-1 block text-xs font-semibold text-slate-500 dark:text-slate-400'
 
 function toCount(value: string): number | null {
   if (value.trim() === '') return 0

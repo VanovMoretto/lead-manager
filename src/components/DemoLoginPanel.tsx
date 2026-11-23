@@ -43,10 +43,10 @@ export default function DemoLoginPanel({ redirectTo, disabled = false }: DemoLog
   return (
     <section
       aria-labelledby="demo-mode-title"
-      className="mb-8 rounded-xl border border-brand-200 bg-gradient-to-br from-brand-50 via-white to-amber-50 p-4 shadow-sm dark:border-brand-900/60 dark:from-brand-950/60 dark:via-slate-900 dark:to-slate-900"
+      className="mb-8 rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900"
     >
-      <h2 id="demo-mode-title" className="text-sm font-bold text-brand-900 dark:text-brand-100">
-        ✨ Modo Demonstração (Portfólio)
+      <h2 id="demo-mode-title" className="text-sm font-semibold text-slate-900 dark:text-white">
+        Modo demonstração
       </h2>
       <p className="mt-1.5 text-xs leading-relaxed text-slate-600 dark:text-slate-300">
         Todos os clientes, propostas e valores são <strong className="font-semibold">fictícios</strong> e ficam só neste
@@ -61,7 +61,7 @@ export default function DemoLoginPanel({ redirectTo, disabled = false }: DemoLog
           className={cn(buttonClassName, 'bg-brand-600 text-white hover:bg-brand-700')}
         >
           {pending === 'admin' && <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />}
-          🚀 Entrar como Admin (1 Clique)
+          Entrar como Admin
         </button>
         <button
           type="button"
@@ -69,12 +69,12 @@ export default function DemoLoginPanel({ redirectTo, disabled = false }: DemoLog
           disabled={busy}
           className={cn(
             buttonClassName,
-            'border border-brand-200 bg-white text-brand-800 hover:bg-brand-50',
-            'dark:border-brand-800 dark:bg-slate-900 dark:text-brand-200 dark:hover:bg-brand-900/40',
+            'border border-slate-300 bg-white text-slate-800 hover:bg-slate-100',
+            'dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800',
           )}
         >
           {pending === 'sales' && <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />}
-          👤 Entrar como Comercial (1 Clique)
+          Entrar como Comercial
         </button>
       </div>
 

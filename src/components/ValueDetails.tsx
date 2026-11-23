@@ -42,7 +42,7 @@ export default function ValueDetails({ title, rows, total, extraRows = [], footn
           align === 'right' ? 'right-0' : 'left-0',
         )}
       >
-        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{title}</p>
+        <p className="mb-2 text-xs font-semibold text-slate-500 dark:text-slate-400">{title}</p>
         <ul className="space-y-1.5">
           {rows.map((row) => (
             <li key={row.label} className={cn('flex items-baseline justify-between gap-3', row.value === 0 && 'opacity-50')}>

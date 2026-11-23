@@ -1,4 +1,6 @@
-# Gestão de Leads e Orçamentos de Eventos
+# Verto
+
+**Do orçamento ao faturamento do evento.** O nome vem do latim *verto* (eu converto, eu transformo).
 
 Micro-CRM para equipes comerciais de espaços de eventos: cadastro rápido de leads, acompanhamento de propostas, follow-up e indicadores de conversão.
 

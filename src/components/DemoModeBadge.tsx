@@ -57,20 +57,20 @@ export default function DemoModeBadge({ compact = false, className }: DemoModeBa
   return (
     <div
       className={cn(
-        'rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2.5 dark:border-amber-900/60 dark:bg-amber-950/30',
+        'rounded-lg border border-amber-300/30 bg-amber-300/10 px-3 py-2.5',
         className,
       )}
     >
-      <p className="flex items-center gap-1.5 text-xs font-semibold text-amber-800 dark:text-amber-200">
+      <p className="flex items-center gap-1.5 text-xs font-semibold text-amber-200">
         <FlaskConical className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
         Modo Demo · Portfólio
       </p>
-      <p className="mt-0.5 text-[11px] leading-snug text-amber-700/90 dark:text-amber-300/80">Dados fictícios, salvos só nesta aba.</p>
+      <p className="mt-0.5 text-xs leading-snug text-amber-100/80">Dados fictícios, salvos só nesta aba.</p>
       <button
         type="button"
         onClick={() => void restore()}
         disabled={restoring}
-        className="mt-2 inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-white px-2 py-1 text-xs font-semibold text-amber-800 transition-colors hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-amber-800 dark:bg-slate-900 dark:text-amber-200 dark:hover:bg-amber-950/50"
+        className="mt-2 inline-flex items-center gap-1.5 rounded-md border border-amber-300/40 px-2 py-1 text-xs font-semibold text-amber-100 transition-colors hover:bg-amber-300/15 disabled:cursor-not-allowed disabled:opacity-60"
       >
         {icon}
         {restoring ? 'Restaurando...' : 'Restaurar dados'}

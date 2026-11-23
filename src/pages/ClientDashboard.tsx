@@ -135,24 +135,20 @@ function KpiCard({
   icon: Icon,
   label,
   value,
-  accent,
   onClick,
   children,
 }: {
   icon: LucideIcon
   label: string
   value: string
-  accent: string
   onClick?: () => void
   children?: ReactNode
 }) {
   const content = (
     <>
       <div className="flex items-center gap-2">
-        <span className={cn('flex h-8 w-8 items-center justify-center rounded-lg', accent)}>
-          <Icon className="h-4 w-4" aria-hidden="true" />
-        </span>
-        <p className="text-sm font-medium text-slate-500 dark:text-slate-400">{label}</p>
+        <Icon className="h-4 w-4 shrink-0 text-slate-400 dark:text-slate-500" aria-hidden="true" />
+        <p className="text-sm font-medium text-slate-600 dark:text-slate-400">{label}</p>
         {onClick && (
           <span className="ml-auto inline-flex items-center gap-1 text-xs font-semibold text-brand-700 opacity-70 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 dark:text-brand-300">
             <ChartColumn className="h-3.5 w-3.5" aria-hidden="true" />
@@ -160,7 +156,7 @@ function KpiCard({
           </span>
         )}
       </div>
-      <p className="mt-3 text-2xl font-bold tracking-tight text-slate-900 tabular-nums dark:text-white">{value}</p>
+      <p className="mt-2 text-2xl font-semibold tracking-[-0.01em] text-slate-900 tabular-nums dark:text-white">{value}</p>
       {children && <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">{children}</div>}
     </>
   )
@@ -172,7 +168,7 @@ function KpiCard({
       aria-haspopup="dialog"
       className={cn(
         cardClassName,
-        'group p-5 text-left transition-all hover:-translate-y-0.5 hover:border-brand-300 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 dark:hover:border-brand-700',
+        'group p-5 text-left transition-colors hover:border-brand-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 dark:hover:border-brand-600',
       )}
     >
       {content}
@@ -383,7 +379,7 @@ function ClientHeaderEditor({ client, onSaved }: { client: Client; onSaved: (cli
       )}
 
       <div className="mt-4 max-w-3xl">
-        <label htmlFor="client-notes" className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+        <label htmlFor="client-notes" className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-slate-500 dark:text-slate-400">
           <NotebookPen className="h-3.5 w-3.5" aria-hidden="true" />
           Observações gerais do cliente
         </label>
@@ -1047,7 +1043,7 @@ export default function ClientDashboard() {
 
       {/* KPIs do cliente */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <KpiCard icon={Wallet} label="Receita total gerada (LTV)" value={formatBRL(summary.ltv)} accent="bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300" onClick={() => openMetrics('revenue')}>
+        <KpiCard icon={Wallet} label="Receita total gerada (LTV)" value={formatBRL(summary.ltv)} onClick={() => openMetrics('revenue')}>
           <div className="space-y-0.5">
             <p className="flex items-center gap-1.5">
               <MapPin className="h-3 w-3" aria-hidden="true" /> Locação {formatBRL(summary.rental)}
@@ -1060,14 +1056,14 @@ export default function ClientDashboard() {
             </p>
           </div>
         </KpiCard>
-        <KpiCard icon={TrendingUp} label="Em negociação (pipeline)" value={formatBRL(summary.pipeline)} accent="bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300" onClick={() => openMetrics('pipeline')}>
+        <KpiCard icon={TrendingUp} label="Em negociação (pipeline)" value={formatBRL(summary.pipeline)} onClick={() => openMetrics('pipeline')}>
           {summary.openCount} {summary.openCount === 1 ? 'proposta em aberto' : 'propostas em aberto'}
         </KpiCard>
-        <KpiCard icon={Target} label="Conversão do cliente" value={formatPercent(summary.conversion)} accent="bg-brand-50 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300" onClick={() => openMetrics('conversion')}>
+        <KpiCard icon={Target} label="Conversão do cliente" value={formatPercent(summary.conversion)} onClick={() => openMetrics('conversion')}>
           {summary.total} {summary.total === 1 ? 'solicitação' : 'solicitações'} · {summary.sent} {summary.sent === 1 ? 'enviada' : 'enviadas'} ·{' '}
           {summary.closedCount} {summary.closedCount === 1 ? 'fechada' : 'fechadas'}
         </KpiCard>
-        <KpiCard icon={Handshake} label="Ticket médio fechado" value={formatBRL(summary.ticket)} accent="bg-violet-50 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300">
+        <KpiCard icon={Handshake} label="Ticket médio fechado" value={formatBRL(summary.ticket)}>
           {summary.closedCount > 0 ? `Média de ${summary.closedCount} ${summary.closedCount === 1 ? 'evento fechado' : 'eventos fechados'}` : 'Nenhum evento fechado ainda'}
         </KpiCard>
       </div>
@@ -1134,7 +1130,7 @@ export default function ClientDashboard() {
               </p>
             )}
             <table className="w-full min-w-[1100px] text-left text-sm">
-              <thead className="whitespace-nowrap border-b border-slate-200 bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:border-slate-800 dark:bg-slate-950/50 dark:text-slate-400">
+              <thead className="whitespace-nowrap border-b border-slate-200 bg-slate-50 text-xs font-semibold text-slate-500 dark:border-slate-800 dark:bg-slate-950/50 dark:text-slate-400">
                 <tr>
                   <th scope="col" className="py-3 pl-5 pr-3">Solicitação</th>
                   <th scope="col" className="px-3 py-3">Nº proposta</th>
@@ -1175,7 +1171,7 @@ export default function ClientDashboard() {
                         <p className="font-medium text-slate-800 dark:text-slate-100">{contact?.name ?? lead.contact_name}</p>
                         {contact?.role && <p className="text-xs text-slate-500 dark:text-slate-400">{contact.role}</p>}
                         {lead.client_id !== client.id && (
-                          <p className="mt-0.5 text-xs font-medium text-violet-700 dark:text-violet-300">
+                          <p className="mt-0.5 text-xs font-medium text-teal-700 dark:text-teal-300">
                             Indicação{lead.company ? ` · ${lead.company}` : ''}
                           </p>
                         )}

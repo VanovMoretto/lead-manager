@@ -89,7 +89,7 @@ type AsyncResult<T> = { key: string; data: T | null; error: string | null }
 function FilterField({ label, htmlFor, children, className }: { label: string; htmlFor: string; children: ReactNode; className?: string }) {
   return (
     <div className={className}>
-      <label htmlFor={htmlFor} className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+      <label htmlFor={htmlFor} className="mb-1.5 block text-xs font-semibold text-slate-500 dark:text-slate-400">
         {label}
       </label>
       {children}
@@ -167,7 +167,7 @@ function SortableHeader({ field, label, sort, onSort, align = 'left', className 
         type="button"
         onClick={() => onSort(field)}
         className={cn(
-          'inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wide transition-colors',
+          'inline-flex items-center gap-1 text-xs font-semibold transition-colors',
           active ? 'text-brand-700 dark:text-brand-300' : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white',
           align === 'right' && 'flex-row-reverse',
         )}
@@ -678,19 +678,19 @@ export default function LeadSearch() {
                 <tr>
                   <SortableHeader field="created_at" label="Criado em" sort={sort} onSort={handleSort} className="pl-5" />
                   <SortableHeader field="contact_name" label="Contato" sort={sort} onSort={handleSort} />
-                  <th scope="col" className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                  <th scope="col" className="px-3 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400">
                     Salas / Origem
                   </th>
                   <SortableHeader field="event_date" label="Evento" sort={sort} onSort={handleSort} />
                   <SortableHeader field="total_value" label="Receita total" sort={sort} onSort={handleSort} align="right" />
-                  <th scope="col" className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                  <th scope="col" className="px-3 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400">
                     Proposta
                   </th>
                   <SortableHeader field="status" label="Situação" sort={sort} onSort={handleSort} />
-                  <th scope="col" className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                  <th scope="col" className="px-3 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400">
                     Responsável
                   </th>
-                  <th scope="col" className="px-5 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                  <th scope="col" className="px-5 py-3 text-right text-xs font-semibold text-slate-500 dark:text-slate-400">
                     Ações
                   </th>
                 </tr>

@@ -46,7 +46,7 @@ export function Section({ icon: Icon, title, children }: SectionProps) {
         <span className="flex h-7 w-7 items-center justify-center rounded-md bg-brand-50 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300">
           <Icon className="h-4 w-4" aria-hidden="true" />
         </span>
-        <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-700 dark:text-slate-200">{title}</h3>
+        <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">{title}</h3>
       </div>
       {children}
     </section>

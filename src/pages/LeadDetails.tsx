@@ -131,7 +131,7 @@ function Card({ icon: Icon, title, actions, children, className }: { icon: Lucid
 function InfoRow({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div>
-      <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{label}</dt>
+      <dt className="text-xs font-semibold text-slate-500 dark:text-slate-400">{label}</dt>
       <dd className="mt-0.5 text-sm text-slate-900 dark:text-slate-100">{children}</dd>
     </div>
   )
@@ -618,7 +618,7 @@ function PostEventCard({ lead, onSaved }: { lead: Lead; onSaved: (lead: Lead) =>
     }
   }
 
-  const label = 'mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400'
+  const label = 'mb-1.5 block text-xs font-semibold text-slate-500 dark:text-slate-400'
   const input =
     'block w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white'
 
@@ -878,7 +878,7 @@ function ProposalCard({ editor, lossReasonLabels }: { editor: LeadSectionDraft; 
       <div id="proposal-card" className="space-y-5">
         <div className="space-y-5">
           <div>
-            <p id="lead-status-label" className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+            <p id="lead-status-label" className="mb-2 text-xs font-semibold text-slate-500 dark:text-slate-400">
               Situação
             </p>
             <div role="radiogroup" aria-labelledby="lead-status-label" className="grid grid-cols-3 gap-2">
@@ -985,7 +985,7 @@ function ProposalCard({ editor, lossReasonLabels }: { editor: LeadSectionDraft; 
 
         <div className="grid grid-cols-1 gap-6 md:grid-cols-2 md:items-start">
           <div className="min-w-0 space-y-3">
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Valores</p>
+            <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">Valores</p>
             <Field label="Locação de sala (R$)" htmlFor="lead-value_cents" error={errors.value_cents}>
               <MoneyInput id="lead-value_cents" cents={draft.value_cents} invalid={Boolean(errors.value_cents)} onChange={(cents) => update('value_cents', cents)} />
             </Field>
@@ -1028,12 +1028,12 @@ function ProposalCard({ editor, lossReasonLabels }: { editor: LeadSectionDraft; 
             )}
           </div>
 
-          <div className="overflow-hidden rounded-lg border border-brand-100 dark:border-brand-900/60" aria-live="polite">
-            <div className="bg-gradient-to-br from-brand-900 to-brand-600 p-4 text-white">
-              <p className="text-xs font-semibold uppercase tracking-wide text-brand-100">Locação de sala</p>
-              <p className="mt-1 text-2xl font-bold tabular-nums">{draft.value_cents !== null ? formatCentsBRL(draft.value_cents) : '—'}</p>
+          <div className="overflow-hidden rounded-lg border border-brand-200 dark:border-brand-800" aria-live="polite">
+            <div className="border-b border-brand-200 bg-brand-50 p-4 dark:border-brand-800 dark:bg-brand-950/60">
+              <p className="text-xs font-semibold text-brand-800 dark:text-brand-200">Locação de sala</p>
+              <p className="mt-1 text-2xl font-semibold tabular-nums text-brand-950 dark:text-white">{draft.value_cents !== null ? formatCentsBRL(draft.value_cents) : '—'}</p>
             </div>
-            <dl className="divide-y divide-slate-100 bg-brand-50/40 px-4 text-sm dark:divide-slate-800 dark:bg-brand-950/20">
+            <dl className="divide-y divide-slate-100 bg-white px-4 text-sm dark:divide-slate-800 dark:bg-slate-900">
               <div className="flex items-baseline justify-between gap-3 py-2">
                 <dt>
                   <span className="font-medium text-slate-800 dark:text-slate-100">Receita líquida total</span>

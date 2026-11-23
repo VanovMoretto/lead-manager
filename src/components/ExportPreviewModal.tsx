@@ -40,7 +40,7 @@ function Stat({ label, value, highlight }: { label: string; value: string; highl
   )
 }
 
-const headCell = 'px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400'
+const headCell = 'px-3 py-2 text-left text-xs font-semibold text-slate-500 dark:text-slate-400'
 const bodyCell = 'px-3 py-2 align-top text-slate-700 dark:text-slate-200'
 
 function LeadsSample({ leads }: { leads: Lead[] }) {
@@ -190,7 +190,7 @@ export default function ExportPreviewModal({ preview, busy, onCancel, onConfirm 
 
         <div className="flex-1 space-y-5 overflow-y-auto px-5 py-5">
           <div>
-            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Filtros aplicados</p>
+            <p className="mb-2 text-xs font-semibold text-slate-500 dark:text-slate-400">Filtros aplicados</p>
             <div className="flex flex-wrap gap-1.5">
               {preview.filters.map((filter) => (
                 <span key={filter} className="rounded-md bg-slate-100 px-2 py-0.5 text-xs text-slate-700 dark:bg-slate-800 dark:text-slate-200">
@@ -213,7 +213,7 @@ export default function ExportPreviewModal({ preview, busy, onCancel, onConfirm 
             </p>
           ) : (
             <div>
-              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+              <p className="mb-2 text-xs font-semibold text-slate-500 dark:text-slate-400">
                 Primeiras linhas do arquivo
               </p>
               <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-800">

@@ -57,10 +57,6 @@ const NAV_ITEMS: NavItem[] = [
   { to: '/admin', label: 'Painel Admin', icon: Settings, adminOnly: true },
 ]
 
-function Brand() {
-  return <AppLogo size="md" />
-}
-
 type SidebarContentProps = {
   onNewLead: () => void
   onNavigate?: () => void
@@ -82,19 +78,18 @@ function SidebarContent({ onNewLead, onNavigate }: SidebarContentProps) {
   }
 
   return (
-    <div className="flex h-full flex-col">
-      <div className="px-5 pb-5 pt-6">
-        <Brand />
+    <div className="flex h-full flex-col bg-rail text-white">
+      <div className="flex h-16 items-center px-5">
+        <AppLogo size="md" variant="onDark" />
       </div>
 
-      <div className="px-4">
+      <div className="px-3 pt-2">
         <button
           type="button"
           onClick={onNewLead}
           className={cn(
-            'flex w-full items-center justify-center gap-2 rounded-lg bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors',
-            'hover:bg-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 focus-visible:ring-offset-2',
-            'dark:focus-visible:ring-offset-slate-900',
+            'flex w-full items-center justify-center gap-2 rounded-lg bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors',
+            'hover:bg-brand-500 focus-visible:ring-offset-rail',
           )}
         >
           <Plus className="h-4 w-4" aria-hidden="true" />
@@ -102,10 +97,7 @@ function SidebarContent({ onNewLead, onNavigate }: SidebarContentProps) {
         </button>
       </div>
 
-      <nav className="mt-6 flex-1 space-y-1 px-3" aria-label="Navegação principal">
-        <p className="px-3 pb-2 text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">
-          Menu
-        </p>
+      <nav className="mt-5 flex-1 space-y-0.5 overflow-y-auto px-3" aria-label="Navegação principal">
         {navItems.map(({ to, label, icon: Icon, end }) => (
           <NavLink
             key={to}
@@ -114,22 +106,15 @@ function SidebarContent({ onNewLead, onNavigate }: SidebarContentProps) {
             onClick={onNavigate}
             className={({ isActive }) =>
               cn(
-                'group flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-                isActive
-                  ? 'bg-brand-50 text-brand-900 dark:bg-brand-900/40 dark:text-white'
-                  : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white',
+                'group flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors focus-visible:ring-offset-rail',
+                isActive ? 'bg-rail-active text-white' : 'text-rail-muted hover:bg-rail-hover hover:text-white',
               )
             }
           >
             {({ isActive }) => (
               <>
                 <Icon
-                  className={cn(
-                    'h-5 w-5 shrink-0',
-                    isActive
-                      ? 'text-brand-600 dark:text-brand-300'
-                      : 'text-slate-400 group-hover:text-slate-600 dark:text-slate-500 dark:group-hover:text-slate-300',
-                  )}
+                  className={cn('h-[18px] w-[18px] shrink-0', isActive ? 'text-brand-300' : 'text-rail-muted group-hover:text-white')}
                   aria-hidden="true"
                 />
                 {label}
@@ -145,30 +130,30 @@ function SidebarContent({ onNewLead, onNavigate }: SidebarContentProps) {
         </Suspense>
       )}
 
-      <div className="space-y-1 border-t border-slate-200 px-3 py-4 dark:border-slate-800">
+      <div className="space-y-0.5 border-t border-rail-line px-3 py-3">
         {username && (
           <Link
             to="/perfil"
             onClick={onNavigate}
             title="Editar perfil"
-            className="group mb-2 flex items-center gap-3 rounded-lg px-3 py-2 transition-colors hover:bg-slate-100 dark:hover:bg-slate-800"
+            className="group mb-1 flex items-center gap-3 rounded-lg px-3 py-2 transition-colors hover:bg-rail-hover focus-visible:ring-offset-rail"
           >
-            <UserAvatar path={profile?.avatar_path} name={username} className="h-9 w-9" />
+            <UserAvatar path={profile?.avatar_path} name={username} className="h-8 w-8" />
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-sm font-medium text-slate-700 dark:text-slate-200">{username}</span>
-              <span className="block text-xs text-slate-500 dark:text-slate-400">Editar perfil</span>
+              <span className="block truncate text-sm font-medium text-white">{username}</span>
+              <span className="block text-xs text-rail-muted">Meu perfil</span>
             </span>
-            <ChevronRight className="h-4 w-4 shrink-0 text-slate-400 group-hover:text-slate-600 dark:group-hover:text-slate-300" aria-hidden="true" />
+            <ChevronRight className="h-4 w-4 shrink-0 text-rail-muted group-hover:text-white" aria-hidden="true" />
           </Link>
         )}
-        <ThemeToggle showLabel />
+        <ThemeToggle showLabel onRail />
         <button
           type="button"
           onClick={handleSignOut}
           disabled={signingOut}
           className={cn(
-            'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-slate-600 transition-colors',
-            'hover:bg-red-50 hover:text-red-700 dark:text-slate-300 dark:hover:bg-red-950/40 dark:hover:text-red-300',
+            'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-rail-muted transition-colors',
+            'hover:bg-rail-hover hover:text-white focus-visible:ring-offset-rail',
             'disabled:cursor-not-allowed disabled:opacity-60',
           )}
         >
@@ -231,14 +216,14 @@ export default function Layout() {
   const outletContext: LayoutOutletContext = { openNewLead, openNewLeadForClient, showToast, leadsVersion }
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950">
+    <div className="min-h-screen bg-canvas dark:bg-slate-950">
       {/* Sidebar fixa (desktop) */}
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 border-r border-slate-200 bg-white lg:block dark:border-slate-800 dark:bg-slate-900">
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-60 bg-rail lg:block dark:border-r dark:border-slate-800">
         <SidebarContent onNewLead={openNewLead} />
       </aside>
 
       {/* Barra superior (mobile/tablet) */}
-      <header className="sticky top-0 z-30 flex h-16 items-center justify-between gap-3 border-b border-slate-200 bg-white/90 px-4 backdrop-blur lg:hidden dark:border-slate-800 dark:bg-slate-900/90">
+      <header className="sticky top-0 z-30 flex h-14 items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 lg:hidden dark:border-slate-800 dark:bg-slate-900">
         <div className="flex items-center gap-2">
           <button
             type="button"
@@ -248,7 +233,7 @@ export default function Layout() {
           >
             <Menu className="h-5 w-5" aria-hidden="true" />
           </button>
-          <Brand />
+          <AppLogo size="sm" />
         </div>
         <div className="flex items-center gap-1">
           {DemoModeBadge && (
@@ -276,14 +261,13 @@ export default function Layout() {
         <div
           onClick={() => setIsMobileMenuOpen(false)}
           className={cn(
-            'absolute inset-0 bg-slate-900/40 backdrop-blur-sm transition-opacity duration-300',
+            'absolute inset-0 bg-slate-950/50 transition-opacity duration-200',
             isMobileMenuOpen ? 'opacity-100' : 'opacity-0',
           )}
         />
         <aside
           className={cn(
-            'absolute inset-y-0 left-0 w-72 max-w-[85vw] border-r border-slate-200 bg-white shadow-xl transition-transform duration-300 ease-out',
-            'dark:border-slate-800 dark:bg-slate-900',
+            'absolute inset-y-0 left-0 w-72 max-w-[85vw] bg-rail shadow-xl transition-transform duration-200 ease-out',
             isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full',
           )}
         >
@@ -291,7 +275,7 @@ export default function Layout() {
             type="button"
             onClick={() => setIsMobileMenuOpen(false)}
             aria-label="Fechar menu"
-            className="absolute right-3 top-3 rounded-lg p-2 text-slate-500 transition-colors hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
+            className="absolute right-3 top-3 z-10 rounded-lg p-2 text-rail-muted transition-colors hover:bg-rail-hover hover:text-white"
           >
             <X className="h-5 w-5" aria-hidden="true" />
           </button>
@@ -300,8 +284,8 @@ export default function Layout() {
       </div>
 
       {/* Conteúdo full-width */}
-      <main className="lg:pl-64">
-        <div className="w-full px-4 py-6 sm:px-6 lg:px-10 lg:py-8">
+      <main className="lg:pl-60">
+        <div className="mx-auto w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8 lg:py-7">
           <Outlet context={outletContext} />
         </div>
       </main>

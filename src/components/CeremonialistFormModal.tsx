@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { CircleAlert, LoaderCircle, Sparkles, X } from 'lucide-react'
+import { CircleAlert, LoaderCircle, HeartHandshake, X } from 'lucide-react'
 import type { PostgrestError } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
 import { formatPhoneBR, isValidEmail, isValidPhoneBR, onlyDigits } from '../lib/format'
@@ -115,8 +115,8 @@ export default function CeremonialistFormModal({ onClose, onCreated }: Ceremonia
       >
         <header className="flex items-center justify-between gap-3 border-b border-slate-200 px-5 py-4 dark:border-slate-800">
           <div className="flex items-center gap-3">
-            <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-violet-50 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300">
-              <Sparkles className="h-5 w-5" aria-hidden="true" />
+            <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-teal-50 text-teal-700 dark:bg-teal-950/40 dark:text-teal-300">
+              <HeartHandshake className="h-5 w-5" aria-hidden="true" />
             </span>
             <div>
               <h2 id="ceremonialist-form-title" className="text-base font-semibold text-slate-900 dark:text-white">

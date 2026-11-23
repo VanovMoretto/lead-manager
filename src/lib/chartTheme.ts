@@ -1,6 +1,6 @@
-// Paleta categórica validada (contraste, daltonismo e separação entre cores
-// vizinhas) para o fundo branco e para o fundo escuro. A ordem é fixa: a cor
-// segue a categoria, nunca a posição no ranking.
+// Paleta dos gráficos: azul do Verto na série principal, verde para fechadas,
+// âmbar para em aberto e vermelho para perdas. A ordem é fixa: a cor segue a
+// categoria, nunca a posição no ranking.
 
 export type ChartTheme = {
   series: string[]
@@ -16,16 +16,16 @@ export type ChartTheme = {
 
 export const CHART_THEMES: Record<'light' | 'dark', ChartTheme> = {
   light: {
-    series: ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#6250d6'],
-    loss: '#e34948',
-    neutral: '#94a3b8',
+    series: ['#2563EB', '#0E7490', '#059669', '#D97706', '#1E3A8A', '#64748B', '#BE185D'],
+    loss: '#DC2626',
+    neutral: '#CBD5E1',
     grid: '#e2e8f0',
     axis: '#64748b',
     surface: '#ffffff',
     cursor: 'rgba(148, 163, 184, 0.15)',
   },
   dark: {
-    series: ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#008300', '#9085e9'],
+    series: ['#60A5FA', '#22D3EE', '#34D399', '#FBBF24', '#93C5FD', '#94A3B8', '#F472B6'],
     loss: '#e66767',
     neutral: '#64748b',
     grid: '#1e293b',

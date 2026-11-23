@@ -59,7 +59,7 @@ type AsyncResult<T> = { key: string; data: T | null; error: string | null }
 function FilterField({ label, htmlFor, children }: { label: string; htmlFor: string; children: ReactNode }) {
   return (
     <div>
-      <label htmlFor={htmlFor} className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+      <label htmlFor={htmlFor} className="mb-1.5 block text-xs font-semibold text-slate-500 dark:text-slate-400">
         {label}
       </label>
       {children}
@@ -89,7 +89,7 @@ function SortableHeader({ field, label, sort, onSort, align = 'left', className 
         type="button"
         onClick={() => onSort(field)}
         className={cn(
-          'inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wide transition-colors',
+          'inline-flex items-center gap-1 text-xs font-semibold transition-colors',
           active ? 'text-brand-700 dark:text-brand-300' : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white',
           align === 'right' && 'flex-row-reverse',
         )}
@@ -356,13 +356,13 @@ export default function ClientList() {
               <thead className="whitespace-nowrap border-b border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950/50">
                 <tr>
                   <SortableHeader field="name" label="Lead (Empresa / Cliente)" sort={sort} onSort={handleSort} className="pl-5" />
-                  <th scope="col" className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                  <th scope="col" className="px-3 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400">
                     Pessoas de contato
                   </th>
                   <SortableHeader field="proposals_count" label="Propostas" sort={sort} onSort={handleSort} />
                   <SortableHeader field="closed_revenue" label="Receita gerada" sort={sort} onSort={handleSort} align="right" />
                   <SortableHeader field="last_proposal_at" label="Último contato" sort={sort} onSort={handleSort} />
-                  <th scope="col" className="px-5 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                  <th scope="col" className="px-5 py-3 text-right text-xs font-semibold text-slate-500 dark:text-slate-400">
                     Ações
                   </th>
                 </tr>

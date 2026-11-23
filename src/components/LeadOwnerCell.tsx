@@ -17,7 +17,7 @@ type LeadOwnerCellProps = {
 }
 
 const pillClassName =
-  'inline-flex max-w-[11rem] items-center gap-1 rounded-md border border-indigo-200 bg-indigo-50 px-2 py-1 text-xs font-semibold text-indigo-800 dark:border-indigo-900 dark:bg-indigo-950/40 dark:text-indigo-200'
+  'inline-flex max-w-[11rem] items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-semibold text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200'
 
 /**
  * Responsável pela proposta (quem cadastrou). Só o ADMIN troca; para os demais é só leitura.
@@ -83,7 +83,7 @@ export default function LeadOwnerCell({ leadId, userId, logins, leadLabel, onErr
       disabled={saving}
       onClick={(event) => event.stopPropagation()}
       onChange={(event) => void handleChange(event.target.value)}
-      className="w-full min-w-[7.5rem] max-w-[11rem] rounded-md border border-indigo-200 bg-indigo-50 px-2 py-1 text-xs font-semibold text-indigo-800 focus:outline-none focus:ring-2 focus:ring-brand-600/30 disabled:opacity-60 dark:border-indigo-900 dark:bg-indigo-950/40 dark:text-indigo-200"
+      className="w-full min-w-[7.5rem] max-w-[11rem] rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-brand-600/30 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
     >
       {!owner && <option value="">—</option>}
       {owner && !login && <option value={owner}>—</option>}

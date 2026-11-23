@@ -162,18 +162,18 @@ function Kpi({
   return (
     <div
       className={cn(
-        'h-full rounded-xl p-5 shadow-sm',
+        'h-full rounded-xl border p-5 shadow-sm',
         highlight
-          ? 'bg-gradient-to-br from-brand-900 to-brand-600 text-white'
-          : 'border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900',
+          ? 'border-brand-200 bg-brand-50 dark:border-brand-800 dark:bg-brand-950/60'
+          : 'border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900',
       )}
     >
-      <p className={cn('flex items-center gap-2 text-sm font-medium', highlight ? 'text-brand-100' : 'text-slate-500 dark:text-slate-400')}>
-        <Icon className="h-4 w-4" aria-hidden="true" />
+      <p className={cn('flex items-center gap-2 text-sm font-medium', highlight ? 'text-brand-900 dark:text-brand-100' : 'text-slate-600 dark:text-slate-400')}>
+        <Icon className={cn('h-4 w-4', highlight ? 'text-brand-600 dark:text-brand-300' : 'text-slate-400 dark:text-slate-500')} aria-hidden="true" />
         {title}
       </p>
-      <p className={cn('mt-2 text-2xl font-bold tabular-nums', highlight ? 'text-white' : 'text-slate-900 dark:text-white')}>{value}</p>
-      {children && <div className={cn('mt-2 space-y-0.5 text-xs', highlight ? 'text-brand-100' : 'text-slate-500 dark:text-slate-400')}>{children}</div>}
+      <p className={cn('mt-2 text-2xl font-semibold tabular-nums', highlight ? 'text-brand-900 dark:text-white' : 'text-slate-900 dark:text-white')}>{value}</p>
+      {children && <div className={cn('mt-2 space-y-0.5 text-xs', highlight ? 'text-brand-800 dark:text-brand-200' : 'text-slate-500 dark:text-slate-400')}>{children}</div>}
     </div>
   )
 }
@@ -585,8 +585,8 @@ export default function RevenueMap() {
     }
   }
 
-  const headCell = 'px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400'
-  const footLabel = 'py-2.5 pl-5 pr-3 text-xs font-bold uppercase tracking-wide'
+  const headCell = 'px-3 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400'
+  const footLabel = 'py-2.5 pl-5 pr-3 text-xs font-bold'
 
   return (
     <>
@@ -660,13 +660,12 @@ export default function RevenueMap() {
             total={{ label: 'Confirmado + Realizado', value: summary.confirmed.rental }}
             extraRows={[{ label: 'Eventos à confirmar', value: rentalBySituation.a_confirmar }]}
             footnote="À confirmar não entra no total."
-            dark
             className="rounded-xl"
           >
             <Kpi icon={Target} title="Locação de salas" value={formatBRL(summary.confirmed.rental)} highlight>
               <p>Confirmado + Realizado</p>
               <p>
-                À confirmar: <strong className="font-semibold text-white">{formatBRL(summary.pending.rental)}</strong>
+                À confirmar: <strong className="font-semibold text-brand-900 dark:text-white">{formatBRL(summary.pending.rental)}</strong>
               </p>
               {month !== null && (
                 <p className="flex items-center gap-1">
@@ -675,7 +674,7 @@ export default function RevenueMap() {
                   ) : (
                     <>
                       {variation >= 0 ? <TrendingUp className="h-3.5 w-3.5" aria-hidden="true" /> : <TrendingDown className="h-3.5 w-3.5" aria-hidden="true" />}
-                      <strong className="font-semibold text-white">
+                      <strong className="font-semibold text-brand-900 dark:text-white">
                         {variation >= 0 ? '+' : ''}
                         {(variation * 100).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%
                       </strong>{' '}
@@ -803,7 +802,7 @@ export default function RevenueMap() {
           {customRange && (
             <div className="flex flex-wrap items-end gap-3">
               <label className="text-sm font-medium text-slate-700 dark:text-slate-200">
-                <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">De</span>
+                <span className="mb-1 block text-xs font-semibold text-slate-500 dark:text-slate-400">De</span>
                 <input
                   type="date"
                   value={customRange.from}
@@ -812,7 +811,7 @@ export default function RevenueMap() {
                 />
               </label>
               <label className="text-sm font-medium text-slate-700 dark:text-slate-200">
-                <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Até</span>
+                <span className="mb-1 block text-xs font-semibold text-slate-500 dark:text-slate-400">Até</span>
                 <input
                   type="date"
                   value={customRange.to}
@@ -1000,13 +999,13 @@ export default function RevenueMap() {
                   <td className="px-3 py-2.5 text-right font-bold tabular-nums">{formatBRL(gross.net)}</td>
                   <td colSpan={3} />
                 </tr>
-                <tr className="bg-gradient-to-r from-brand-900 to-brand-600 text-white">
+                <tr className="border-t-2 border-brand-900 bg-brand-50 text-brand-950 dark:border-brand-400 dark:bg-brand-950/60 dark:text-white">
                   <td colSpan={6} className={footLabel}>
                     Total locação de salas
                   </td>
                   <td className="px-3 py-3 text-right text-base font-bold tabular-nums">{formatBRL(metaConfirmed)}</td>
-                  <td colSpan={10} className="px-3 py-3 text-sm text-brand-100">
-                    Confirmado / Realizado · <span className="font-semibold text-white">À confirmar: {formatBRL(metaPending)}</span>
+                  <td colSpan={10} className="px-3 py-3 text-sm text-brand-800 dark:text-brand-200">
+                    Confirmado / Realizado · <span className="font-semibold text-brand-950 dark:text-white">À confirmar: {formatBRL(metaPending)}</span>
                   </td>
                 </tr>
               </tfoot>

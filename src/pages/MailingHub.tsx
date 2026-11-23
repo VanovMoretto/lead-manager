@@ -223,14 +223,11 @@ function SuperCard({
   children?: ReactNode
 }) {
   return (
-    <section className="relative flex flex-col overflow-hidden rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-      <span className="absolute inset-x-0 top-0 h-1 bg-brand-600" aria-hidden="true" />
-      <div className="flex items-start justify-between gap-3">
-        <h2 className="text-sm font-medium text-slate-500 dark:text-slate-400">{title}</h2>
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300">
-          <Icon className="h-5 w-5" aria-hidden="true" />
-        </span>
-      </div>
+    <section className="flex flex-col rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+      <h2 className="flex items-center gap-2 text-sm font-medium text-slate-600 dark:text-slate-400">
+        <Icon className="h-4 w-4 shrink-0 text-slate-400 dark:text-slate-500" aria-hidden="true" />
+        {title}
+      </h2>
       {loading ? (
         <div className="mt-3 space-y-2">
           <Skeleton className="h-9 w-24" />
@@ -239,7 +236,7 @@ function SuperCard({
         </div>
       ) : (
         <>
-          <p className="mt-2 text-3xl font-bold tabular-nums text-slate-900 dark:text-white">{value}</p>
+          <p className="mt-2 text-[1.75rem] font-semibold leading-tight tracking-[-0.01em] tabular-nums text-slate-900 dark:text-white">{value}</p>
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{caption}</p>
           {children && <div className="mt-4 space-y-3 border-t border-slate-100 pt-4 dark:border-slate-800">{children}</div>}
         </>
@@ -279,7 +276,7 @@ function EmptyState({ icon: Icon, title, description }: { icon: LucideIcon; titl
 const selectClassName =
   'rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-900 shadow-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-950 dark:text-white'
 
-const thClassName = 'px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400'
+const thClassName = 'px-3 py-2.5 text-left text-xs font-semibold text-slate-500 dark:text-slate-400'
 const tdClassName = 'px-3 py-2.5 align-middle text-sm text-slate-700 dark:text-slate-200'
 
 function ScoreBadge({ score }: { score: number | null }) {

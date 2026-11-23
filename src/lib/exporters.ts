@@ -442,7 +442,7 @@ export function exportLeadsToPdf(leads: Lead[], filterLabels: string[]): void {
       // Rodapé em todas as páginas
       doc.setFontSize(8)
       doc.setTextColor(...SLATE_500)
-      doc.text('Gestão de Leads | Eventos & Orçamentos', margin, pageHeight - 7)
+      doc.text('Verto | Propostas e orçamentos', margin, pageHeight - 7)
       doc.text(`Página ${doc.getNumberOfPages()}`, pageWidth - margin, pageHeight - 7, { align: 'right' })
     },
   })
@@ -734,7 +734,7 @@ export function exportRevenueToPdf(leads: RevenueLead[], periodLabel: string): v
     didDrawPage: () => {
       doc.setFontSize(8)
       doc.setTextColor(...SLATE_500)
-      doc.text('Gestão de Leads | Faturamento & Eventos', margin, pageHeight - 7)
+      doc.text('Verto | Faturamento e eventos', margin, pageHeight - 7)
       doc.text(`Página ${doc.getNumberOfPages()}`, pageWidth - margin, pageHeight - 7, { align: 'right' })
     },
   })
